@@ -716,6 +716,7 @@ async function updateExpression(chat_id) {
             const results = fuse.search(tag);
             const fileItem = results[0]?.item;
             if (fileItem) {
+                console.debug(DEBUG_PREFIX, 'Playing :', fileItem)
                 timelineMotions.push(fileItem);
             }
         }
