@@ -1074,7 +1074,7 @@ function setBackground(scenePath, scale, position, rotation) {
     }
 }
 
-export async function playTimelineMotions(character, motionsArray) {
+async function playTimelineMotions(character, motionsArray) {
     if (!current_avatars[character]) return;
     if (!motionsArray || motionsArray.length === 0) return;
 
