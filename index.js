@@ -85,7 +85,8 @@ import {
     setModel,
     setLight,
     setBackground,
-    updateModel
+    updateModel,
+    playTimelineMotion
 } from "./vrm.js";
 import {
     onEnabledClick,

@@ -51,7 +51,8 @@ export {
     clearModelCache,
     clearAnimationCache,
     setLight,
-    setBackground
+    setBackground,
+    playTimelineMotions
 }
 
 const VRM_CONTAINER_NAME = "VRM_CONTAINER";
@@ -419,7 +420,8 @@ async function loadModel(model_path) { // Only cache the model if character=null
             "animation": null
         },
         "talkEnd": 0,
-        "hitboxes": {}
+        "hitboxes": {},
+        "motionQueue":[]
     };
 
     // Hit boxes
@@ -673,7 +675,14 @@ async function setMotion(character, motion_file_path, loop=false, force=false, r
         if (!loop) {
             setTimeout(() => {
                 if (!new_motion_animation.terminated) {
-                    setMotion(character, extension_settings.vrm.model_settings[model_path]["animation_default"]["motion"], true);
+                    if (current_avatars[character]["motionQueue"] && current_avatars[character]["motionQueue"].length > 0) {
+                        // Play the next animation in the queue
+                        const nextMotion = current_avatars[character]["motionQueue"].shift();
+                        setMotion(character, nextMotion, false, true, true);
+                    } else {
+                        // Queue empty, return to default idle motion
+                        setMotion(character, extension_settings.vrm.model_settings[model_path]["animation_default"]["motion"], true);
+                    }
                 }
             }, clip.duration*1000 - ANIMATION_FADE_TIME*1000);
         }
@@ -696,6 +705,37 @@ async function updateExpression(chat_id) {
     if (model_path === undefined) {
         console.debug(DEBUG_PREFIX, 'No model assigned to', character);
         return;
+    }
+
+    const tags = [...message.mes.matchAll(/\[(.*?)\]/g)].map(m => m[1]);
+    const timelineMotions =[];
+
+    if (tags.length > 0) {
+        const fuse = new Fuse(animations_files);
+        for (const tag of tags) {
+            const results = fuse.search(tag);
+            const fileItem = results[0]?.item;
+            if (fileItem) {
+                timelineMotions.push(fileItem);
+            }
+        }
+    }
+
+    if (timelineMotions.length > 0) {
+        console.debug(DEBUG_PREFIX, 'Playing timeline animations:', timelineMotions);
+        
+        // Push the animations to the queue
+        playTimelineMotions(character, timelineMotions);
+
+        // We still classify the face expression normally based on the text
+        const expression = await getExpressionLabel(message.mes);
+        let model_expression = extension_settings.vrm.model_settings[model_path]['classify_mapping'][expression]?.['expression'] || 'none';
+        if (model_expression == 'none') {
+            model_expression = extension_settings.vrm.model_settings[model_path]['animation_default']['expression'];
+        }
+        await setExpression(character, model_expression);
+
+        return; // Exit early so we don't overwrite our timeline with the default classification motion
     }
 
     const expression = await getExpressionLabel(message.mes);
@@ -1032,4 +1072,16 @@ function setBackground(scenePath, scale, position, rotation) {
 
         } );
     }
+}
+
+export async function playTimelineMotions(character, motionsArray) {
+    if (!current_avatars[character]) return;
+    if (!motionsArray || motionsArray.length === 0) return;
+
+    // Set the queue and trigger the first animation immediately
+    current_avatars[character]["motionQueue"] = motionsArray;
+    const firstMotion = current_avatars[character]["motionQueue"].shift();
+    
+    // Play it (loop=false, force=true, random=true)
+    await setMotion(character, firstMotion, false, true, true);
 }
