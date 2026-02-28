@@ -18,7 +18,6 @@ import {
     SPRITE_DIV,
     VN_MODE_DIV,
     HITBOXES,
-    INWORLD_VISEME_MAP
 } from "./constants.js";
 
 import {
