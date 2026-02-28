@@ -143,6 +143,7 @@ const defaultSettings = {
     inworld_tts_enabled: false,
     inworld_api_key: "",
     inworld_voice_id: "Dennis",
+    inworld_temperature: 1.1,
 
     // Performances
     hitboxes: false,
@@ -187,6 +188,7 @@ function loadSettings() {
     $('#vrm_auto_send_hitbox_message_checkbox').prop('checked', extension_settings.vrm.auto_send_hitbox_message);
     $('#vrm_lock_models_checkbox').prop('checked', extension_settings.vrm.lock_models);
     $('#vrm_inworld_tts_enabled_checkbox').prop('checked', extension_settings.vrm.inworld_tts_enabled);
+    $('#vrm_inworld_tts_enabled_checkbox').prop('checked', extension_settings.vrm.inworld_tts_enabled);
     $('#vrm_hitboxes_checkbox').prop('checked', extension_settings.vrm.hitboxes);
     $('#vrm_models_cache_checkbox').prop('checked', extension_settings.vrm.models_cache);
     $('#vrm_animations_cache_checkbox').prop('checked', extension_settings.vrm.animations_cache);
@@ -194,6 +196,8 @@ function loadSettings() {
 
     $('#vrm_inworld_api_key').val(extension_settings.vrm.inworld_api_key);
     $('#vrm_inworld_voice_id').val(extension_settings.vrm.inworld_voice_id);
+    $('#vrm_inworld_temperature').val(extension_settings.vrm.inworld_temperature ?? 1.1);
+    $('#vrm_inworld_temperature_value').text(extension_settings.vrm.inworld_temperature ?? 1.1);
     $('#vrm_light_color').val(extension_settings.vrm.light_color);
     $('#vrm_light_intensity').val(extension_settings.vrm.light_intensity);
     $('#vrm_light_intensity_value').text(extension_settings.vrm.light_intensity);
@@ -230,6 +234,7 @@ function loadSettings() {
     $('#vrm_inworld_tts_enabled_checkbox').on('click', () => { extension_settings.vrm.inworld_tts_enabled = $('#vrm_inworld_tts_enabled_checkbox').is(':checked'); saveSettingsDebounced();});
     $('#vrm_inworld_api_key').on('input', () => {extension_settings.vrm.inworld_api_key = $('#vrm_inworld_api_key').val(); saveSettingsDebounced();});
     $('#vrm_inworld_voice_id').on('input', () => {extension_settings.vrm.inworld_voice_id = $('#vrm_inworld_voice_id').val(); saveSettingsDebounced();});
+    $('#vrm_inworld_temperature').on('input', () => {extension_settings.vrm.inworld_temperature = Number($('#vrm_inworld_temperature').val()); $('#vrm_inworld_temperature_value').text(extension_settings.vrm.inworld_temperature); saveSettingsDebounced();});
     $('#vrm_default_expression_select').on('change', () => {onAnimationMappingChange('animation_default');});
     $('#vrm_default_motion_select').on('change', () => {onAnimationMappingChange('animation_default');});
     $('#vrm_default_expression_replay').on('click', () => {onAnimationMappingChange('animation_default');});

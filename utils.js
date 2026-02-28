@@ -281,6 +281,7 @@ function chunkText(text) {
  */
 async function fetchInworldTTS(text, voiceId) {
     const apiKey = extension_settings.vrm.inworld_api_key || ""; 
+    const temperature = extension_settings.vrm.inworld_temperature ?? 1.1; 
     
     if (!apiKey) {
         console.warn(DEBUG_PREFIX, "Inworld API Key is missing.");
@@ -298,6 +299,7 @@ async function fetchInworldTTS(text, voiceId) {
                 text: text,
                 voiceId: voiceId,
                 modelId: "inworld-tts-1.5-max",
+                temperature: temperature,
                 audioConfig: { 
                     audioEncoding: "MP3", 
                     sampleRateHertz: 44100 
