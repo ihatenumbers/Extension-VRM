@@ -1160,11 +1160,18 @@ async function processAndQueueTTS(character, text, clearQueue = false) {
     if (!dialogueOnly) return;
 
     const sentences = chunkText(dialogueOnly);
-    const voiceId = extension_settings.vrm.inworld_voice_id || "Dennis"; 
+    
+    let voiceId = extension_settings.vrm.inworld_default_voice_id || "Dennis";
+    if (extension_settings.vrm.voiceMap && extension_settings.vrm.voiceMap[character]) {
+        voiceId = extension_settings.vrm.voiceMap[character];
+    }
+
+    const temperature = extension_settings.vrm.inworld_temperature ?? 1.1;
+    const speed = extension_settings.vrm.inworld_speed ?? 1.0;
 
     for (const sentence of sentences) {
-        const [ttsData, animationTag] = await Promise.all([
-            fetchInworldTTS(sentence, voiceId),
+        const[ttsData, animationTag] = await Promise.all([
+            fetchInworldTTS(sentence, voiceId, temperature, speed),
             fetchSmallLLMTag(sentence)
         ]);
 

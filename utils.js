@@ -276,16 +276,24 @@ function chunkText(text) {
     return text.match(/[^.!?]+[.!?]+|\s*[^.!?]+$/g)?.map(s => s.trim()).filter(s => s.length > 0) || [text];
 }
 
+const ttsCache = new Map();
+
 /**
  * Fetches the audio and timestamps from Inworld.
  */
-async function fetchInworldTTS(text, voiceId) {
+async function fetchInworldTTS(text, voiceId, temperature, speed) {
     const apiKey = extension_settings.vrm.inworld_api_key || ""; 
-    const temperature = extension_settings.vrm.inworld_temperature ?? 1.1; 
     
     if (!apiKey) {
         console.warn(DEBUG_PREFIX, "Inworld API Key is missing.");
         return null;
+    }
+
+    // Cache Check: Prevents redundant API calls for repeated dialogue
+    const cacheKey = `${text}|${voiceId}|${temperature}|${speed}`;
+    if (ttsCache.has(cacheKey)) {
+        console.debug(DEBUG_PREFIX, "Using cached Inworld TTS audio.");
+        return ttsCache.get(cacheKey);
     }
 
     try {
@@ -302,14 +310,20 @@ async function fetchInworldTTS(text, voiceId) {
                 temperature: temperature,
                 audioConfig: { 
                     audioEncoding: "MP3", 
-                    sampleRateHertz: 44100 
+                    sampleRateHertz: 44100,
+                    speakingRate: speed
                 },
                 timestampType: "WORD"
             })
         });
 
         if (!response.ok) throw new Error(`Inworld API Error: ${response.status}`);
-        return await response.json();
+        const data = await response.json();
+        
+        // Save to cache
+        ttsCache.set(cacheKey, data);
+        
+        return data;
     } catch (error) {
         console.error(DEBUG_PREFIX, "Inworld TTS fetch failed:", error);
         return null;

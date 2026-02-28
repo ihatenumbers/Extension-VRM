@@ -190,6 +190,12 @@ async function onCharacterChange() {
     }
 
     $('#vrm_model_div').show();
+    
+    if (extension_settings.vrm.voiceMap && extension_settings.vrm.voiceMap[character]) {
+        $('#vrm_character_voice_id').val(extension_settings.vrm.voiceMap[character]);
+    } else {
+        $('#vrm_character_voice_id').val('');
+    }
 }
 
 async function onCharacterRefreshClick() {

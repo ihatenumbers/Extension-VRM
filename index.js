@@ -143,8 +143,10 @@ const defaultSettings = {
     // Inworld TTS Settings
     inworld_tts_enabled: false,
     inworld_api_key: "",
-    inworld_voice_id: "Dennis",
+    inworld_default_voice_id: "Dennis",
     inworld_temperature: 1.1,
+    inworld_speed: 1.0,
+    voiceMap: {},
 
     // Performances
     hitboxes: false,
@@ -196,9 +198,11 @@ function loadSettings() {
     $('#vrm_show_grid_checkbox').prop('checked', extension_settings.vrm.show_grid);
 
     $('#vrm_inworld_api_key').val(extension_settings.vrm.inworld_api_key);
-    $('#vrm_inworld_voice_id').val(extension_settings.vrm.inworld_voice_id);
+    $('#vrm_inworld_default_voice_id').val(extension_settings.vrm.inworld_default_voice_id || 'Dennis');
     $('#vrm_inworld_temperature').val(extension_settings.vrm.inworld_temperature ?? 1.1);
     $('#vrm_inworld_temperature_value').text(extension_settings.vrm.inworld_temperature ?? 1.1);
+    $('#vrm_inworld_speed').val(extension_settings.vrm.inworld_speed ?? 1.0);
+    $('#vrm_inworld_speed_value').text(extension_settings.vrm.inworld_speed ?? 1.0);
     $('#vrm_light_color').val(extension_settings.vrm.light_color);
     $('#vrm_light_intensity').val(extension_settings.vrm.light_intensity);
     $('#vrm_light_intensity_value').text(extension_settings.vrm.light_intensity);
@@ -244,8 +248,17 @@ function loadSettings() {
         }
         saveSettingsDebounced();});
     $('#vrm_inworld_api_key').on('input', () => {extension_settings.vrm.inworld_api_key = $('#vrm_inworld_api_key').val(); saveSettingsDebounced();});
-    $('#vrm_inworld_voice_id').on('input', () => {extension_settings.vrm.inworld_voice_id = $('#vrm_inworld_voice_id').val(); saveSettingsDebounced();});
+    $('#vrm_inworld_default_voice_id').on('input', () => {extension_settings.vrm.inworld_default_voice_id = $('#vrm_inworld_default_voice_id').val(); saveSettingsDebounced();});
     $('#vrm_inworld_temperature').on('input', () => {extension_settings.vrm.inworld_temperature = Number($('#vrm_inworld_temperature').val()); $('#vrm_inworld_temperature_value').text(extension_settings.vrm.inworld_temperature); saveSettingsDebounced();});
+    $('#vrm_inworld_speed').on('input', () => {extension_settings.vrm.inworld_speed = Number($('#vrm_inworld_speed').val()); $('#vrm_inworld_speed_value').text(extension_settings.vrm.inworld_speed); saveSettingsDebounced();});
+    $('#vrm_character_voice_id').on('input', () => {
+        const character = String($('#vrm_character_select').val());
+        if (character !== 'none') {
+            if (!extension_settings.vrm.voiceMap) extension_settings.vrm.voiceMap = {};
+            extension_settings.vrm.voiceMap[character] = $('#vrm_character_voice_id').val();
+            saveSettingsDebounced();
+        }
+    });
     $('#vrm_default_expression_select').on('change', () => {onAnimationMappingChange('animation_default');});
     $('#vrm_default_motion_select').on('change', () => {onAnimationMappingChange('animation_default');});
     $('#vrm_default_expression_replay').on('click', () => {onAnimationMappingChange('animation_default');});
@@ -325,23 +338,26 @@ jQuery(async () => {
     getContainer().append(windowHtml);
     loadSettings();
 
-    $(document).on('click', '.mes_speak', async function(e) {
+    document.body.addEventListener('click', (e) => {
         if (extension_settings.vrm.inworld_tts_enabled) {
-            e.preventDefault();
-            e.stopImmediatePropagation(); // Block ST's native TTS from firing
+            const speakBtn = e.target.closest('.mes_speak');
+            if (speakBtn) {
+                e.preventDefault();
+                e.stopPropagation(); // Hard-stop SillyTavern's native TTS from firing
+                
+                const messageBlock = speakBtn.closest('.mes');
+                if (messageBlock) {
+                    const messageId = messageBlock.getAttribute('mesid');
+                    const message = getContext().chat[messageId];
 
-            const messageBlock = $(this).closest('.mes');
-            const messageId = messageBlock.attr('mesid');
-            const message = getContext().chat[messageId];
-
-            if (message && !message.is_system) {
-                // 1. Play the standard [bracket] animations found in the text
-                updateExpression(messageId); 
-                // 2. Clear current audio and play Inworld TTS
-                processAndQueueTTS(message.name, message.mes, true); 
+                    if (message && !message.is_system) {
+                        updateExpression(messageId); 
+                        processAndQueueTTS(message.name, message.mes, true); 
+                    }
+                }
             }
         }
-    });
+    }, { capture: true });
     /*// Module worker
     const wrapper = new ModuleWorkerWrapper(moduleWorker);
     setInterval(wrapper.update.bind(wrapper), UPDATE_INTERVAL);
