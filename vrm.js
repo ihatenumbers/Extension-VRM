@@ -35,7 +35,8 @@ import {
 } from '../../../utils.js';
 
 import {
-    animations_files
+    animations_files,
+    animations_groups 
 } from './ui.js';
 
 export {
@@ -1147,14 +1148,11 @@ function stopTTS(character) {
     });
 }
 
-// Added clearQueue parameter to interrupt previous speech
 async function processAndQueueTTS(character, text, clearQueue = false) {
     const avatar = current_avatars[character];
     if (!avatar) return;
 
-    if (clearQueue) {
-        stopTTS(character);
-    }
+    if (clearQueue) stopTTS(character);
 
     const dialogueOnly = extractDialogue(text);
     if (!dialogueOnly) return;
@@ -1169,10 +1167,25 @@ async function processAndQueueTTS(character, text, clearQueue = false) {
     const temperature = extension_settings.vrm.inworld_temperature ?? 1.1;
     const speed = extension_settings.vrm.inworld_speed ?? 1.0;
 
-    for (const sentence of sentences) {
-        const[ttsData, animationTag] = await Promise.all([
+    // Build available lists for Groq LLM
+    let availableExpressions =[];
+    if (avatar.vrm && avatar.vrm.expressionManager) {
+        availableExpressions = Object.keys(avatar.vrm.expressionManager.expressionMap).filter(
+            e => !avatar.vrm.expressionManager.blinkExpressionNames.includes(e) && 
+                 !avatar.vrm.expressionManager.mouthExpressionNames.includes(e) && 
+                 !avatar.vrm.expressionManager.lookAtExpressionNames.includes(e)
+        );
+    }
+    const availableMotions = animations_groups ||[];
+
+    for (let i = 0; i < sentences.length; i++) {
+        const sentence = sentences[i];
+        const textBefore = sentences.slice(0, i).join(' ');
+        const textAfter = sentences.slice(i + 1).join(' ');
+
+        const [ttsData, tags] = await Promise.all([
             fetchInworldTTS(sentence, voiceId, temperature, speed),
-            fetchSmallLLMTag(sentence)
+            fetchSmallLLMTag(sentence, textBefore, textAfter, availableExpressions, availableMotions)
         ]);
 
         if (ttsData && ttsData.audioContent) {
@@ -1181,7 +1194,8 @@ async function processAndQueueTTS(character, text, clearQueue = false) {
             avatar.ttsQueue.push({
                 audioBase64: ttsData.audioContent,
                 visemes: visemes,
-                animation: animationTag
+                expression: tags.expression,
+                motion: tags.motion
             });
 
             playNextInQueue(character);
@@ -1205,9 +1219,12 @@ function playNextInQueue(character) {
     avatar.currentTtsAudio = audio;
     avatar.currentVisemes = item.visemes;
 
-    // 2. Trigger predicted small LLM animation
-    if (item.animation && item.animation !== "none") {
-        setMotion(character, item.animation, false, true, true);
+    // 2. Trigger predicted LLM expression and animation
+    if (item.expression && item.expression !== "none") {
+        setExpression(character, item.expression);
+    }
+    if (item.motion && item.motion !== "none") {
+        setMotion(character, item.motion, false, true, true);
     }
 
     // 3. Cleanup on end and play next chunk

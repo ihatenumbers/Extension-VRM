@@ -140,13 +140,16 @@ const defaultSettings = {
     auto_send_hitbox_message: false,
     lock_models: false,
 
-    // Inworld TTS Settings
+    // Inworld TTS
     inworld_tts_enabled: false,
     inworld_api_key: "",
     inworld_default_voice_id: "Dennis",
     inworld_temperature: 1.1,
     inworld_speed: 1.0,
     voiceMap: {},
+
+    // Groq LLM
+    groq_api_key: "",
 
     // Performances
     hitboxes: false,
@@ -203,6 +206,7 @@ function loadSettings() {
     $('#vrm_inworld_temperature_value').text(extension_settings.vrm.inworld_temperature ?? 1.1);
     $('#vrm_inworld_speed').val(extension_settings.vrm.inworld_speed ?? 1.0);
     $('#vrm_inworld_speed_value').text(extension_settings.vrm.inworld_speed ?? 1.0);
+    $('#vrm_groq_api_key').val(extension_settings.vrm.groq_api_key);
     $('#vrm_light_color').val(extension_settings.vrm.light_color);
     $('#vrm_light_intensity').val(extension_settings.vrm.light_intensity);
     $('#vrm_light_intensity_value').text(extension_settings.vrm.light_intensity);
@@ -259,6 +263,7 @@ function loadSettings() {
             saveSettingsDebounced();
         }
     });
+    $('#vrm_groq_api_key').on('input', () => {extension_settings.vrm.groq_api_key = $('#vrm_groq_api_key').val(); saveSettingsDebounced();});
     $('#vrm_default_expression_select').on('change', () => {onAnimationMappingChange('animation_default');});
     $('#vrm_default_motion_select').on('change', () => {onAnimationMappingChange('animation_default');});
     $('#vrm_default_expression_replay').on('click', () => {onAnimationMappingChange('animation_default');});

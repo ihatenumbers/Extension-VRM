@@ -330,18 +330,81 @@ async function fetchInworldTTS(text, voiceId, temperature, speed) {
     }
 }
 
+const llmTagCache = new Map();
+
 /**
- * TODO: Small LLM Post-Processing via Groq
- * Fetches a single animation tag based on the dialogue.
+ * Uses Groq API to fetch the best expression and animation based on context.
  */
-async function fetchSmallLLMTag(sentence) {
-    // TODO: Implement GroqCloud API call here.
-    // Use `animations_groups` (imported from ui.js) to tell the LLM what tags are allowed.
-    // Check an in-memory `llm_tag_cache` dictionary first to save latency.
-    
-    // Dummy delay to simulate parallel API call for now
-    await delay(300); 
-    return "none"; // Return a dummy tag for now
+async function fetchSmallLLMTag(sentence, textBefore, textAfter, availableExpressions, availableMotions) {
+    const apiKey = extension_settings.vrm.groq_api_key || "";
+    if (!apiKey) return { expression: null, motion: null };
+
+    // Cache Check: Prevents redundant LLM calls
+    const cacheKey = `${sentence}|${textBefore}|${textAfter}`;
+    if (llmTagCache.has(cacheKey)) {
+        console.debug(DEBUG_PREFIX, "Using cached LLM tag:", llmTagCache.get(cacheKey));
+        return llmTagCache.get(cacheKey);
+    }
+
+    const systemPrompt = `You are an animation director for a 3D avatar.
+Choose ONE expression and ONE animation that best match the "Current Sentence".
+
+Available Expressions: ${availableExpressions.join(', ')}
+Available Animations: ${availableMotions.join(', ')}
+
+Reply EXACTLY with this format and nothing else:
+[expression:NAME] [animation:NAME]
+
+If nothing fits perfectly, use [expression:neutral] [animation:neutral].`;
+
+    const userPrompt = `Context Before: "${textBefore}"
+Current Sentence: "${sentence}"
+Context After: "${textAfter}"`;
+
+    try {
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: "llama3-8b-8192",
+                messages:[
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: userPrompt }
+                ],
+                temperature: 0.3,
+                max_tokens: 30
+            })
+        });
+
+        if (!response.ok) throw new Error(`Groq API Error: ${response.status}`);
+        const data = await response.json();
+        const content = data.choices[0].message.content;
+        
+        // Parse the tags: [expression:cheekpuff][animation:anger]
+        let expressionMatch = content.match(/\[expression:(.*?)\]/i);
+        let motionMatch = content.match(/\[animation:(.*?)\]/i);
+
+        let result = {
+            expression: expressionMatch ? expressionMatch[1].trim() : null,
+            motion: motionMatch ? motionMatch[1].trim() : null
+        };
+
+        // Fallback validation: Ensure LLM didn't hallucinate a non-existent file
+        if (result.expression && !availableExpressions.includes(result.expression)) result.expression = null;
+        if (result.motion && !availableMotions.includes(result.motion)) result.motion = null;
+
+        console.debug(DEBUG_PREFIX, "System prompt: ", systemPrompt, "| User prompt: ", userPrompt, "| Groq Output:", content, "| Parsed Tags:", result);
+
+        llmTagCache.set(cacheKey, result);
+        return result;
+
+    } catch (error) {
+        console.error(DEBUG_PREFIX, "Groq LLM fetch failed:", error);
+        return { expression: null, motion: null };
+    }
 }
 
 /**
