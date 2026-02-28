@@ -95,14 +95,13 @@ const gridHelper = new THREE.GridHelper( 20, 20 );
 const axesHelper = new THREE.AxesHelper( 10 );
 
 
-// animate
 function animate() {
     requestAnimationFrame( animate );
     if (renderer !== undefined && scene !== undefined && camera !== undefined) {
         const deltaTime = clock.getDelta();
 
         for(const character in current_avatars) {
-            const avatar = current_avatars[character]; // Helper reference
+            const avatar = current_avatars[character];
             const vrm = avatar["vrm"];
             const mixer = avatar["animation_mixer"];
             
@@ -114,36 +113,6 @@ function animate() {
 
             vrm.update( deltaTime );
             mixer.update( deltaTime );
-
-            if (extension_settings.vrm.inworld_tts_enabled && avatar.isPlayingTts && avatar.currentTtsAudio) {
-                const currentTime = avatar.currentTtsAudio.currentTime;
-                
-                // Added a +0.1s tail to endTime to bridge tiny gaps between phonemes (stops flapping)
-                const activeViseme = avatar.currentVisemes.find(v => currentTime >= v.startTime && currentTime <= (v.endTime + 0.1));
-                
-                if (activeViseme && INWORLD_VISEME_MAP[activeViseme.symbol]) {
-                    const mapping = INWORLD_VISEME_MAP[activeViseme.symbol];['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => avatar.targetVisemes[shape] = 0);
-                    if (mapping.shape !== 'none') {
-                        avatar.targetVisemes[mapping.shape] = mapping.weight;
-                    }
-                } else {
-                    // Only drop to 0 if there is truly no phoneme playing
-                    ['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => avatar.targetVisemes[shape] = 0);
-                }
-                
-                // Smoothly interpolate (Lerp) current blendshapes to target weights
-                const LERP_SPEED = 12.0; // Slightly slower for more natural, connected speech
-                ['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => {
-                    const currentWeight = vrm.expressionManager.getValue(shape) || 0;
-                    const targetWeight = avatar.targetVisemes[shape] || 0;
-                    
-                    // Close mouth slightly faster than opening it to mimic jaw gravity
-                    const speed = targetWeight === 0 ? LERP_SPEED * 1.5 : LERP_SPEED;
-                    
-                    const newWeight = THREE.MathUtils.lerp(currentWeight, targetWeight, deltaTime * speed);
-                    vrm.expressionManager.setValue(shape, newWeight);
-                });
-            } 
         }
         // Show/hide helper grid
         gridHelper.visible = extension_settings.vrm.show_grid;
@@ -152,7 +121,6 @@ function animate() {
         renderer.render( scene, camera );
     }
 }
-
 animate();
 
 async function loadScene() {
@@ -446,8 +414,6 @@ async function loadModel(model_path) { // Only cache the model if character=null
         "ttsQueue":[],
         "isPlayingTts": false,
         "currentTtsAudio": null,
-        "currentVisemes":[],
-        "targetVisemes": { 'aa': 0, 'ee': 0, 'ih': 0, 'oh': 0, 'ou': 0 }
     };
 
     // Hit boxes
@@ -1120,23 +1086,6 @@ function base64ToBlob(base64, mimeType) {
     return new Blob([byteArray], {type: mimeType});
 }
 
-// Flatten the complex nested Inworld timestamp JSON into a simple, fast array
-function flattenVisemes(timestampInfo) {
-    const visemes =[];
-    if (!timestampInfo?.wordAlignment?.phoneticDetails) return visemes;
-
-    for (const detail of timestampInfo.wordAlignment.phoneticDetails) {
-        for (const phone of detail.phones) {
-            visemes.push({
-                symbol: phone.visemeSymbol,
-                startTime: phone.startTimeSeconds,
-                endTime: phone.startTimeSeconds + phone.durationSeconds
-            });
-        }
-    }
-    return visemes;
-}
-
 // Immediately stops current TTS and resets the mouth
 function stopTTS(character) {
     const avatar = current_avatars[character];
@@ -1154,7 +1103,6 @@ function stopTTS(character) {
         }
     });
 
-    // Reset to defaults cleanly
     const model_path = extension_settings.vrm.character_model_mapping[character];
     if (model_path) {
         const defaultExp = extension_settings.vrm.model_settings[model_path]['animation_default']['expression'];
@@ -1162,6 +1110,73 @@ function stopTTS(character) {
         if (avatar.expression !== defaultExp) setExpression(character, defaultExp);
         if (avatar.motion.name !== defaultMot) setMotion(character, defaultMot, true, false, false);
     }
+}
+
+// Replaces the old audioTalk with a direct MediaElement binder
+function attachVolumeLipSync(audio, character) {
+    if (!extension_settings.vrm.tts_lips_sync) return;
+
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const analyser = audioContext.createAnalyser();
+    analyser.smoothingTimeConstant = 0.5;
+    analyser.fftSize = 1024;
+
+    // Bind directly to our queued audio object
+    const source = audioContext.createMediaElementSource(audio);
+    source.connect(analyser);
+    analyser.connect(audioContext.destination);
+
+    const javascriptNode = audioContext.createScriptProcessor(256, 1, 1);
+    analyser.connect(javascriptNode);
+    javascriptNode.connect(audioContext.destination);
+
+    const mouththreshold = 10;
+    const mouthboost = 10;
+    let lastUpdate = 0;
+    const LIPS_SYNC_DELAY = 66;
+
+    javascriptNode.onaudioprocess = function() {
+        if (audio.paused || audio.ended) return;
+
+        const array = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(array);
+        let values = 0;
+        for (let i = 0; i < array.length; i++) {
+            values += array[i];
+        }
+        const average = values / array.length;
+        const inputvolume = average * (audioContext.sampleRate / 48000);
+
+        const voweldamp = 53;
+        const vowelmin = 12;
+
+        if (Date.now() - lastUpdate > LIPS_SYNC_DELAY) {
+            const avatar = current_avatars[character];
+            if (avatar && avatar.vrm) {
+                for (const expression in avatar.vrm.expressionManager.expressionMap) {
+                    avatar.vrm.expressionManager.setValue(expression, Math.min(0.25, avatar.vrm.expressionManager.getValue(expression)));
+                }
+
+                if (inputvolume > (mouththreshold * 2)) {
+                    const new_value = ((average - vowelmin) / voweldamp) * (mouthboost / 10);
+                    avatar.vrm.expressionManager.setValue("aa", new_value);
+                } else {
+                    avatar.vrm.expressionManager.setValue("aa", 0);
+                }
+            }
+            lastUpdate = Date.now();
+        }
+    };
+
+    // Cleanup when audio ends
+    audio.addEventListener("ended", () => {
+        source.disconnect();
+        analyser.disconnect();
+        javascriptNode.disconnect();
+        if (audioContext.state !== 'closed') {
+            audioContext.close();
+        }
+    }, { once: true });
 }
 
 async function processAndQueueTTS(character, text, clearQueue = false) {
@@ -1181,7 +1196,6 @@ async function processAndQueueTTS(character, text, clearQueue = false) {
     const temperature = extension_settings.vrm.inworld_temperature ?? 1.1;
     const speed = extension_settings.vrm.inworld_speed ?? 1.0;
 
-    // Build available lists for Groq LLM
     let availableExpressions =[];
     if (avatar.vrm && avatar.vrm.expressionManager) {
         availableExpressions = Object.keys(avatar.vrm.expressionManager.expressionMap).filter(
@@ -1201,11 +1215,8 @@ async function processAndQueueTTS(character, text, clearQueue = false) {
         ]);
 
         if (ttsData && ttsData.audioContent) {
-            const visemes = flattenVisemes(ttsData.timestampInfo);
-            
             avatar.ttsQueue.push({
                 audioBase64: ttsData.audioContent,
-                visemes: visemes,
                 expression: tags.expression,
                 motion: tags.motion
             });
@@ -1237,41 +1248,35 @@ async function playNextInQueue(character) {
     avatar.isPlayingTts = true;
     const item = avatar.ttsQueue.shift();
 
-    // 1. Setup Audio Blob URL immediately
     const blob = base64ToBlob(item.audioBase64, 'audio/mp3');
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     audio.volume = 1.0; 
     
     avatar.currentTtsAudio = audio;
-    avatar.currentVisemes = item.visemes;
 
-    // 2. TIMING FIX: Trigger animation and expression FIRST
     if (item.expression && item.expression !== "none") {
         setExpression(character, item.expression);
     }
     if (item.motion && item.motion !== "none") {
-        // Pass false for returnToIdle so they hold the pose!
         setMotion(character, item.motion, false, true, true, false); 
     }
 
-    // 3. Wait 800ms to let the animation play out before the voice starts
     await new Promise(resolve => setTimeout(resolve, 800));
 
-    // 4. Safety Check: If user clicked "Stop" during the 800ms delay, abort playback
     if (!avatar.isPlayingTts || avatar.currentTtsAudio !== audio) {
         URL.revokeObjectURL(url);
         return; 
     }
 
-    // 5. Play Audio
+    attachVolumeLipSync(audio, character);
+
     audio.onended = () => {
         URL.revokeObjectURL(url); 
         avatar.isPlayingTts = false;
         avatar.currentTtsAudio = null;['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => {
             if (avatar.vrm && avatar.vrm.expressionManager) {
                 avatar.vrm.expressionManager.setValue(shape, 0);
-                avatar.targetVisemes[shape] = 0;
             }
         });
         

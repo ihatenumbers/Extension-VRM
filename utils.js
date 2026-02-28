@@ -394,7 +394,6 @@ async function fetchInworldTTS(text, voiceId, temperature, speed) {
                     sampleRateHertz: 44100,
                     speakingRate: speed
                 },
-                timestampType: "WORD"
             })
         });
 
