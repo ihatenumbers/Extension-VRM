@@ -1097,9 +1097,6 @@ async function playTimelineMotions(character, motionsArray) {
     await setMotion(character, firstMotion, false, true, true);
 }
 
-import { extractDialogue, chunkText, fetchInworldTTS, fetchSmallLLMTag } from './utils.js';
-import { INWORLD_VISEME_MAP } from './constants.js';
-
 // Flatten the complex nested Inworld timestamp JSON into a simple, fast array
 function flattenVisemes(timestampInfo) {
     const visemes =[];
