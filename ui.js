@@ -29,7 +29,6 @@ import {
     delay,
     loadAnimationUi,
 } from './utils.js';
-import { exp } from './lib/jsm/nodes/Nodes.js';
 
 export {
     onEnabledClick,

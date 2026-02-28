@@ -18,7 +18,6 @@ import {
     setExpression,
     setMotion
 } from "./vrm.js";
-import { func } from './lib/jsm/nodes/code/FunctionNode.js';
 import { delay } from '../../../utils.js';
 
 // Mouse controls

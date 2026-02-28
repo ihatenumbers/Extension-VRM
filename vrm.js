@@ -17,12 +17,17 @@ import {
     ANIMATION_FADE_TIME,
     SPRITE_DIV,
     VN_MODE_DIV,
-    HITBOXES
+    HITBOXES,
+    INWORLD_VISEME_MAP
 } from "./constants.js";
 
 import {
     currentChatMembers,
-    getExpressionLabel
+    getExpressionLabel,
+    extractDialogue,
+    chunkText,
+    fetchInworldTTS,
+    fetchSmallLLMTag
 } from './utils.js';
 
 import {
@@ -1112,7 +1117,7 @@ function flattenVisemes(timestampInfo) {
     return visemes;
 }
 
-export async function processAndQueueTTS(character, text) {
+async function processAndQueueTTS(character, text) {
     const avatar = current_avatars[character];
     if (!avatar) return;
 
