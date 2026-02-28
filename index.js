@@ -87,7 +87,8 @@ import {
     setBackground,
     updateModel,
     playTimelineMotions,
-    processAndQueueTTS
+    processAndQueueTTS,
+    stopTTS
 } from "./vrm.js";
 import {
     onEnabledClick,
@@ -231,7 +232,17 @@ function loadSettings() {
     $('#vrm_model_rotation_x').on('input', onModelRotationChange);
     $('#vrm_model_rotation_y').on('input', onModelRotationChange);
 
-    $('#vrm_inworld_tts_enabled_checkbox').on('click', () => { extension_settings.vrm.inworld_tts_enabled = $('#vrm_inworld_tts_enabled_checkbox').is(':checked'); saveSettingsDebounced();});
+    $('#vrm_inworld_tts_enabled_checkbox').on('click', () => {
+        extension_settings.vrm.inworld_tts_enabled = $('#vrm_inworld_tts_enabled_checkbox').is(':checked');
+        extension_settings.vrm.inworld_tts_enabled = isEnabled;
+
+        // Force disable ST's native TTS to prevent double-audio overlap
+        if (isEnabled && extension_settings.tts) {
+            extension_settings.tts.enabled = false;
+            $('#tts_enabled').prop('checked', false).trigger('change');
+            toastr.info("Native TTS disabled. Using VRM Inworld TTS.");
+        }
+        saveSettingsDebounced();});
     $('#vrm_inworld_api_key').on('input', () => {extension_settings.vrm.inworld_api_key = $('#vrm_inworld_api_key').val(); saveSettingsDebounced();});
     $('#vrm_inworld_voice_id').on('input', () => {extension_settings.vrm.inworld_voice_id = $('#vrm_inworld_voice_id').val(); saveSettingsDebounced();});
     $('#vrm_inworld_temperature').on('input', () => {extension_settings.vrm.inworld_temperature = Number($('#vrm_inworld_temperature').val()); $('#vrm_inworld_temperature_value').text(extension_settings.vrm.inworld_temperature); saveSettingsDebounced();});
@@ -261,10 +272,9 @@ function loadSettings() {
     eventSource.on(event_types.MESSAGE_RECEIVED, async (chat_id) => {
         const message = getContext().chat[chat_id];
         
-        // If Inworld pipeline is enabled, route to our new chunked processor
         if (extension_settings.vrm.inworld_tts_enabled && !message.is_user && !message.is_system) {
-            updateExpression(chat_id); // Still update face expression based on main text
-            processAndQueueTTS(message.name, message.mes);
+            updateExpression(chat_id); 
+            processAndQueueTTS(message.name, message.mes, true); // true = clear queue and play immediately
         } else {
             updateExpression(chat_id);
             talk(chat_id);
@@ -272,9 +282,11 @@ function loadSettings() {
     });
 
     eventSource.on(event_types.MESSAGE_EDITED, async (chat_id) => {
+        const message = getContext().chat[chat_id];
+        
         if (extension_settings.vrm.inworld_tts_enabled && !message.is_user && !message.is_system) {
-            updateExpression(chat_id);
-            processAndQueueTTS(message.name, message.mes);
+            updateExpression(chat_id); 
+            processAndQueueTTS(message.name, message.mes, true);
         } else {
             updateExpression(chat_id);
             talk(chat_id);
@@ -313,7 +325,23 @@ jQuery(async () => {
     getContainer().append(windowHtml);
     loadSettings();
 
+    $(document).on('click', '.mes_speak', async function(e) {
+        if (extension_settings.vrm.inworld_tts_enabled) {
+            e.preventDefault();
+            e.stopImmediatePropagation(); // Block ST's native TTS from firing
 
+            const messageBlock = $(this).closest('.mes');
+            const messageId = messageBlock.attr('mesid');
+            const message = getContext().chat[messageId];
+
+            if (message && !message.is_system) {
+                // 1. Play the standard [bracket] animations found in the text
+                updateExpression(messageId); 
+                // 2. Clear current audio and play Inworld TTS
+                processAndQueueTTS(message.name, message.mes, true); 
+            }
+        }
+    });
     /*// Module worker
     const wrapper = new ModuleWorkerWrapper(moduleWorker);
     setInterval(wrapper.update.bind(wrapper), UPDATE_INTERVAL);

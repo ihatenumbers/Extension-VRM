@@ -58,7 +58,8 @@ export {
     setLight,
     setBackground,
     playTimelineMotions,
-    processAndQueueTTS
+    processAndQueueTTS,
+    stopTTS
 }
 
 const VRM_CONTAINER_NAME = "VRM_CONTAINER";
@@ -1097,6 +1098,17 @@ async function playTimelineMotions(character, motionsArray) {
     await setMotion(character, firstMotion, false, true, true);
 }
 
+// Helper to convert Base64 directly into a playable Blob
+function base64ToBlob(base64, mimeType) {
+    const byteCharacters = atob(base64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    return new Blob([byteArray], {type: mimeType});
+}
+
 // Flatten the complex nested Inworld timestamp JSON into a simple, fast array
 function flattenVisemes(timestampInfo) {
     const visemes =[];
@@ -1114,19 +1126,43 @@ function flattenVisemes(timestampInfo) {
     return visemes;
 }
 
-async function processAndQueueTTS(character, text) {
+// Immediately stops current TTS and resets the mouth
+function stopTTS(character) {
     const avatar = current_avatars[character];
     if (!avatar) return;
+
+    avatar.ttsQueue =[]; // Clear upcoming sentences
+    if (avatar.currentTtsAudio) {
+        avatar.currentTtsAudio.pause();
+        avatar.currentTtsAudio.currentTime = 0;
+        avatar.currentTtsAudio = null;
+    }
+    avatar.isPlayingTts = false;
+
+    // Reset mouth to neutral
+    ['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => {
+        if (avatar.vrm && avatar.vrm.expressionManager) {
+            avatar.vrm.expressionManager.setValue(shape, 0);
+        }
+    });
+}
+
+// Added clearQueue parameter to interrupt previous speech
+async function processAndQueueTTS(character, text, clearQueue = false) {
+    const avatar = current_avatars[character];
+    if (!avatar) return;
+
+    if (clearQueue) {
+        stopTTS(character);
+    }
 
     const dialogueOnly = extractDialogue(text);
     if (!dialogueOnly) return;
 
     const sentences = chunkText(dialogueOnly);
-    // TODO: Replace with dynamic voice fetching from UI settings
     const voiceId = extension_settings.vrm.inworld_voice_id || "Dennis"; 
 
     for (const sentence of sentences) {
-        // Run TTS and LLM tagger in parallel!
         const [ttsData, animationTag] = await Promise.all([
             fetchInworldTTS(sentence, voiceId),
             fetchSmallLLMTag(sentence)
@@ -1141,7 +1177,6 @@ async function processAndQueueTTS(character, text) {
                 animation: animationTag
             });
 
-            // Start playing immediately if the queue was empty
             playNextInQueue(character);
         }
     }
@@ -1154,28 +1189,38 @@ function playNextInQueue(character) {
     avatar.isPlayingTts = true;
     const item = avatar.ttsQueue.shift();
 
-    // 1. Setup Audio
-    const audio = new Audio("data:audio/mp3;base64," + item.audioBase64);
+    // 1. Setup Audio using robust Blob URL
+    const blob = base64ToBlob(item.audioBase64, 'audio/mp3');
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.volume = 1.0; // Ensure it's not muted
+    
     avatar.currentTtsAudio = audio;
     avatar.currentVisemes = item.visemes;
 
-    // 2. Trigger predicted animation
+    // 2. Trigger predicted small LLM animation
     if (item.animation && item.animation !== "none") {
         setMotion(character, item.animation, false, true, true);
     }
 
     // 3. Cleanup on end and play next chunk
     audio.onended = () => {
+        URL.revokeObjectURL(url); // Free memory
         avatar.isPlayingTts = false;
         avatar.currentTtsAudio = null;
         
-        // Reset mouth to neutral['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => avatar.vrm.expressionManager.setValue(shape, 0));
+        ['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => {
+            if (avatar.vrm && avatar.vrm.expressionManager) {
+                avatar.vrm.expressionManager.setValue(shape, 0);
+            }
+        });
         
         playNextInQueue(character);
     };
 
     audio.play().catch(e => {
-        console.error(DEBUG_PREFIX, "Audio playback blocked/failed:", e);
+        console.error(DEBUG_PREFIX, "Audio playback blocked by browser:", e);
+        URL.revokeObjectURL(url);
         avatar.isPlayingTts = false;
         playNextInQueue(character);
     });
