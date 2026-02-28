@@ -18,7 +18,8 @@ export {
     HITBOXES,
     HIT_BOX_DELAY,
     DEFAULT_LIGHT_COLOR,
-    DEFAULT_LIGHT_INTENSITY
+    DEFAULT_LIGHT_INTENSITY,
+    INWORLD_VISEME_MAP
 }
 
 const MODULE_NAME = "VRM";
@@ -318,3 +319,16 @@ const HITBOXES = {
         "color": 0x6600cc
     }
 }
+
+const INWORLD_VISEME_MAP = {
+    'aei': 'aa',
+    'o': 'oh',
+    'bmp': 'none', // Closed mouth for B, M, P
+    'fv': 'ih',    // Slightly open for F, V
+    'l': 'ih',
+    'r': 'ou',
+    'th': 'ih',
+    'qw': 'ou',
+    'ee': 'ee',
+    'cdgknstxyz': 'ih' // Default slightly open for other consonants
+};

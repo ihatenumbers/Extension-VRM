@@ -52,7 +52,8 @@ export {
     clearAnimationCache,
     setLight,
     setBackground,
-    playTimelineMotions
+    playTimelineMotions,
+    processAndQueueTTS
 }
 
 const VRM_CONTAINER_NAME = "VRM_CONTAINER";
@@ -93,8 +94,9 @@ function animate() {
         const deltaTime = clock.getDelta();
 
         for(const character in current_avatars) {
-            const vrm = current_avatars[character]["vrm"];
-            const mixer = current_avatars[character]["animation_mixer"];
+            const avatar = current_avatars[character]; // Helper reference
+            const vrm = avatar["vrm"];
+            const mixer = avatar["animation_mixer"];
             
             // Look at camera
             if (extension_settings.vrm.follow_camera)
@@ -105,25 +107,25 @@ function animate() {
             vrm.update( deltaTime );
             mixer.update( deltaTime );
 
-            // Update control box
-            const objectContainer = current_avatars[character]["objectContainer"];
-            const hips = vrm.humanoid?.getNormalizedBoneNode("hips");
-            hips.getWorldPosition(current_avatars[character]["collider"].position);
-            //objectContainer.worldToLocal(current_avatars[character]["collider"].position);
-            hips.getWorldQuaternion(current_avatars[character]["collider"].quaternion);
-            current_avatars[character]["collider"].scale.copy(objectContainer.scale);
-            current_avatars[character]["collider"].visible = extension_settings.vrm.show_grid;
+            if (extension_settings.vrm.inworld_tts_enabled && avatar.isPlayingTts && avatar.currentTtsAudio) {
+                const currentTime = avatar.currentTtsAudio.currentTime;
+                
+                // Find which viseme is active at this exact millisecond
+                const activeViseme = avatar.currentVisemes.find(v => currentTime >= v.startTime && currentTime <= v.endTime);
+                
+                // EXACT FIX: Reset all mouth blendshapes to 0 FIRST
+                ['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => {
+                    vrm.expressionManager.setValue(shape, 0);
+                });
 
-            // Update hitbox
-            for (const body_part in current_avatars[character]["hitboxes"]) {
-                const bone = vrm.humanoid?.getNormalizedBoneNode(HITBOXES[body_part]["bone"]);
-                if (bone !== null) {
-                    bone.getWorldPosition(current_avatars[character]["hitboxes"][body_part]["offsetContainer"].position);
-                    bone.getWorldQuaternion(current_avatars[character]["hitboxes"][body_part]["offsetContainer"].quaternion);
-                    current_avatars[character]["hitboxes"][body_part]["offsetContainer"].scale.copy(objectContainer.scale);
-                    current_avatars[character]["hitboxes"][body_part]["offsetContainer"].visible = extension_settings.vrm.show_grid;
+                // Apply the active viseme
+                if (activeViseme && INWORLD_VISEME_MAP[activeViseme.symbol]) {
+                    const shape = INWORLD_VISEME_MAP[activeViseme.symbol];
+                    if (shape !== 'none') {
+                        vrm.expressionManager.setValue(shape, 1.0);
+                    }
                 }
-            }
+            } 
         }
         // Show/hide helper grid
         gridHelper.visible = extension_settings.vrm.show_grid;
@@ -421,7 +423,11 @@ async function loadModel(model_path) { // Only cache the model if character=null
         },
         "talkEnd": 0,
         "hitboxes": {},
-        "motionQueue":[]
+        "motionQueue":[],
+        "ttsQueue":[],
+        "isPlayingTts": false,
+        "currentTtsAudio": null,
+        "currentVisemes":[]
     };
 
     // Hit boxes
@@ -1084,4 +1090,91 @@ async function playTimelineMotions(character, motionsArray) {
     
     // Play it (loop=false, force=true, random=true)
     await setMotion(character, firstMotion, false, true, true);
+}
+
+import { extractDialogue, chunkText, fetchInworldTTS, fetchSmallLLMTag } from './utils.js';
+import { INWORLD_VISEME_MAP } from './constants.js';
+
+// Flatten the complex nested Inworld timestamp JSON into a simple, fast array
+function flattenVisemes(timestampInfo) {
+    const visemes =[];
+    if (!timestampInfo?.wordAlignment?.phoneticDetails) return visemes;
+
+    for (const detail of timestampInfo.wordAlignment.phoneticDetails) {
+        for (const phone of detail.phones) {
+            visemes.push({
+                symbol: phone.visemeSymbol,
+                startTime: phone.startTimeSeconds,
+                endTime: phone.startTimeSeconds + phone.durationSeconds
+            });
+        }
+    }
+    return visemes;
+}
+
+export async function processAndQueueTTS(character, text) {
+    const avatar = current_avatars[character];
+    if (!avatar) return;
+
+    const dialogueOnly = extractDialogue(text);
+    if (!dialogueOnly) return;
+
+    const sentences = chunkText(dialogueOnly);
+    // TODO: Replace with dynamic voice fetching from UI settings
+    const voiceId = extension_settings.vrm.inworld_voice_id || "Dennis"; 
+
+    for (const sentence of sentences) {
+        // Run TTS and LLM tagger in parallel!
+        const [ttsData, animationTag] = await Promise.all([
+            fetchInworldTTS(sentence, voiceId),
+            fetchSmallLLMTag(sentence)
+        ]);
+
+        if (ttsData && ttsData.audioContent) {
+            const visemes = flattenVisemes(ttsData.timestampInfo);
+            
+            avatar.ttsQueue.push({
+                audioBase64: ttsData.audioContent,
+                visemes: visemes,
+                animation: animationTag
+            });
+
+            // Start playing immediately if the queue was empty
+            playNextInQueue(character);
+        }
+    }
+}
+
+function playNextInQueue(character) {
+    const avatar = current_avatars[character];
+    if (!avatar || avatar.isPlayingTts || avatar.ttsQueue.length === 0) return;
+
+    avatar.isPlayingTts = true;
+    const item = avatar.ttsQueue.shift();
+
+    // 1. Setup Audio
+    const audio = new Audio("data:audio/mp3;base64," + item.audioBase64);
+    avatar.currentTtsAudio = audio;
+    avatar.currentVisemes = item.visemes;
+
+    // 2. Trigger predicted animation
+    if (item.animation && item.animation !== "none") {
+        setMotion(character, item.animation, false, true, true);
+    }
+
+    // 3. Cleanup on end and play next chunk
+    audio.onended = () => {
+        avatar.isPlayingTts = false;
+        avatar.currentTtsAudio = null;
+        
+        // Reset mouth to neutral['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => avatar.vrm.expressionManager.setValue(shape, 0));
+        
+        playNextInQueue(character);
+    };
+
+    audio.play().catch(e => {
+        console.error(DEBUG_PREFIX, "Audio playback blocked/failed:", e);
+        avatar.isPlayingTts = false;
+        playNextInQueue(character);
+    });
 }

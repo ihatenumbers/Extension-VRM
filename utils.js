@@ -16,7 +16,11 @@ export {
     delay,
     currentChatMembers,
     loadAnimationUi,
-    getExpressionLabel
+    getExpressionLabel,
+    extractDialogue,
+    chunkText,
+    fetchInworldTTS,
+    fetchSmallLLMTag
 };
 
 const delay = ms => new Promise(res => setTimeout(res, ms));
@@ -252,6 +256,77 @@ async function getExpressionLabel(text) {
         console.error(error);
         return FALLBACK_EXPRESSION;
     }
+}
+
+/**
+ * Extracts only the text inside "quotes". Fallback to removing *asterisks* if no quotes exist.
+ */
+function extractDialogue(text) {
+    const matches = text.match(/"([^"]+)"/g);
+    if (matches) {
+        return matches.map(m => m.replace(/"/g, '')).join(' ');
+    }
+    // Fallback: remove roleplay asterisks
+    return text.replace(/\*[^*]+\*/g, '').trim(); 
+}
+
+function chunkText(text) {
+    if (!text) return[];
+    // Split by punctuation (., !, ?) keeping the punctuation attached.
+    return text.match(/[^.!?]+[.!?]+|\s*[^.!?]+$/g)?.map(s => s.trim()).filter(s => s.length > 0) || [text];
+}
+
+/**
+ * Fetches the audio and timestamps from Inworld.
+ */
+async function fetchInworldTTS(text, voiceId) {
+    // NOTE: You will need to add an input for this in your window.html and ui.js later!
+    const apiKey = extension_settings.vrm.inworld_api_key || ""; 
+    
+    if (!apiKey) {
+        console.warn(DEBUG_PREFIX, "Inworld API Key is missing.");
+        return null;
+    }
+
+    try {
+        const response = await fetch("https://api.inworld.ai/tts/v1/voice", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Basic ${apiKey}`
+            },
+            body: JSON.stringify({
+                text: text,
+                voiceId: voiceId,
+                modelId: "inworld-tts-1.5-max",
+                audioConfig: { 
+                    audioEncoding: "MP3", 
+                    sampleRateHertz: 44100 
+                },
+                timestampType: "WORD" // REQUIRED to get phoneticDetails / visemes!
+            })
+        });
+
+        if (!response.ok) throw new Error(`Inworld API Error: ${response.status}`);
+        return await response.json();
+    } catch (error) {
+        console.error(DEBUG_PREFIX, "Inworld TTS fetch failed:", error);
+        return null;
+    }
+}
+
+/**
+ * TODO: Small LLM Post-Processing via Groq
+ * Fetches a single animation tag based on the dialogue.
+ */
+async function fetchSmallLLMTag(sentence) {
+    // TODO: Implement GroqCloud API call here.
+    // Use `animations_groups` (imported from ui.js) to tell the LLM what tags are allowed.
+    // Check an in-memory `llm_tag_cache` dictionary first to save latency.
+    
+    // Dummy delay to simulate parallel API call for now
+    await delay(300); 
+    return "none"; // Return a dummy tag for now
 }
 
 /**

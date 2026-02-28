@@ -86,7 +86,8 @@ import {
     setLight,
     setBackground,
     updateModel,
-    playTimelineMotions
+    playTimelineMotions,
+    processAndQueueTTS
 } from "./vrm.js";
 import {
     onEnabledClick,
@@ -138,6 +139,11 @@ const defaultSettings = {
     auto_send_hitbox_message: false,
     lock_models: false,
 
+    // Inworld TTS Settings
+    inworld_tts_enabled: false,
+    inworld_api_key: "",
+    inworld_voice_id: "Dennis",
+
     // Performances
     hitboxes: false,
     models_cache: false,
@@ -180,11 +186,14 @@ function loadSettings() {
     $('#vrm_tts_lips_sync_checkbox').prop('checked', extension_settings.vrm.tts_lips_sync);
     $('#vrm_auto_send_hitbox_message_checkbox').prop('checked', extension_settings.vrm.auto_send_hitbox_message);
     $('#vrm_lock_models_checkbox').prop('checked', extension_settings.vrm.lock_models);
+    $('#vrm_inworld_tts_enabled_checkbox').prop('checked', extension_settings.vrm.inworld_tts_enabled);
     $('#vrm_hitboxes_checkbox').prop('checked', extension_settings.vrm.hitboxes);
     $('#vrm_models_cache_checkbox').prop('checked', extension_settings.vrm.models_cache);
     $('#vrm_animations_cache_checkbox').prop('checked', extension_settings.vrm.animations_cache);
     $('#vrm_show_grid_checkbox').prop('checked', extension_settings.vrm.show_grid);
 
+    $('#vrm_inworld_api_key').val(extension_settings.vrm.inworld_api_key);
+    $('#vrm_inworld_voice_id').val(extension_settings.vrm.inworld_voice_id);
     $('#vrm_light_color').val(extension_settings.vrm.light_color);
     $('#vrm_light_intensity').val(extension_settings.vrm.light_intensity);
     $('#vrm_light_intensity_value').text(extension_settings.vrm.light_intensity);
@@ -218,6 +227,9 @@ function loadSettings() {
     $('#vrm_model_rotation_x').on('input', onModelRotationChange);
     $('#vrm_model_rotation_y').on('input', onModelRotationChange);
 
+    $('#vrm_inworld_tts_enabled_checkbox').on('click', () => { extension_settings.vrm.inworld_tts_enabled = $('#vrm_inworld_tts_enabled_checkbox').is(':checked'); saveSettingsDebounced();});
+    $('#vrm_inworld_api_key').on('input', () => {extension_settings.vrm.inworld_api_key = $('#vrm_inworld_api_key').val(); saveSettingsDebounced();});
+    $('#vrm_inworld_voice_id').on('input', () => {extension_settings.vrm.inworld_voice_id = $('#vrm_inworld_voice_id').val(); saveSettingsDebounced();});
     $('#vrm_default_expression_select').on('change', () => {onAnimationMappingChange('animation_default');});
     $('#vrm_default_motion_select').on('change', () => {onAnimationMappingChange('animation_default');});
     $('#vrm_default_expression_replay').on('click', () => {onAnimationMappingChange('animation_default');});
@@ -242,8 +254,17 @@ function loadSettings() {
     });
 
     eventSource.on(event_types.MESSAGE_RECEIVED, async (chat_id) => {
-        updateExpression(chat_id);
-        talk(chat_id);
+        const message = getContext().chat[chat_id];
+        
+        // If Inworld pipeline is enabled, route to our new chunked processor
+        if (extension_settings.vrm.inworld_tts_enabled && !message.is_user && !message.is_system) {
+            updateExpression(chat_id); // Still update face expression based on main text
+            processAndQueueTTS(message.name, message.mes);
+        } else {
+            // Original behavior
+            updateExpression(chat_id);
+            talk(chat_id);
+        }
     });
 
     eventSource.on(event_types.MESSAGE_EDITED, async (chat_id) => {
