@@ -280,7 +280,6 @@ function chunkText(text) {
  * Fetches the audio and timestamps from Inworld.
  */
 async function fetchInworldTTS(text, voiceId) {
-    // NOTE: You will need to add an input for this in your window.html and ui.js later!
     const apiKey = extension_settings.vrm.inworld_api_key || ""; 
     
     if (!apiKey) {
@@ -303,7 +302,7 @@ async function fetchInworldTTS(text, voiceId) {
                     audioEncoding: "MP3", 
                     sampleRateHertz: 44100 
                 },
-                timestampType: "WORD" // REQUIRED to get phoneticDetails / visemes!
+                timestampType: "WORD"
             })
         });
 
