@@ -26,6 +26,7 @@ import {
     getExpressionLabel,
     extractDialogue,
     chunkText,
+    extractSentencesWithContext,
     fetchInworldTTS,
     fetchSmallLLMTag
 } from './utils.js';
@@ -1154,10 +1155,8 @@ async function processAndQueueTTS(character, text, clearQueue = false) {
 
     if (clearQueue) stopTTS(character);
 
-    const dialogueOnly = extractDialogue(text);
-    if (!dialogueOnly) return;
-
-    const sentences = chunkText(dialogueOnly);
+    const sentenceObjects = extractSentencesWithContext(text);
+    if (!sentenceObjects || sentenceObjects.length === 0) return;
     
     let voiceId = extension_settings.vrm.inworld_default_voice_id || "Dennis";
     if (extension_settings.vrm.voiceMap && extension_settings.vrm.voiceMap[character]) {
@@ -1178,10 +1177,8 @@ async function processAndQueueTTS(character, text, clearQueue = false) {
     }
     const availableMotions = animations_groups ||[];
 
-    for (let i = 0; i < sentences.length; i++) {
-        const sentence = sentences[i];
-        const textBefore = sentences.slice(0, i).join(' ');
-        const textAfter = sentences.slice(i + 1).join(' ');
+    for (const item of sentenceObjects) {
+        const { sentence, textBefore, textAfter } = item;
 
         const [ttsData, tags] = await Promise.all([
             fetchInworldTTS(sentence, voiceId, temperature, speed),

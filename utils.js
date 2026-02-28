@@ -19,6 +19,7 @@ export {
     getExpressionLabel,
     extractDialogue,
     chunkText,
+    extractSentencesWithContext,
     fetchInworldTTS,
     fetchSmallLLMTag
 };
@@ -259,6 +260,86 @@ async function getExpressionLabel(text) {
 }
 
 /**
+ * Extracts dialogue sentences and maps them to their surrounding narrative context.
+ */
+function extractSentencesWithContext(text) {
+    const sentences = [];
+    const hasQuotes = /"([^"]+)"/.test(text);
+    const hasAsterisks = /\*([^*]+)\*/.test(text);
+
+    if (hasQuotes) {
+        const regex = /"([^"]+)"/g;
+        let match;
+        let lastIndex = 0;
+        const dialogues =[];
+
+        // Extract dialogue and the narrative immediately before it
+        while ((match = regex.exec(text)) !== null) {
+            const narrativeBefore = text.substring(lastIndex, match.index).trim();
+            const dialogueText = match[1].trim();
+            dialogues.push({ dialogue: dialogueText, narrativeBefore: narrativeBefore, narrativeAfter: "" });
+            lastIndex = regex.lastIndex;
+        }
+        
+        // The remaining text is the narrative after the final dialogue
+        const trailingNarrative = text.substring(lastIndex).trim();
+        
+        // Link the narrativeAfter for each dialogue chunk
+        for (let i = 0; i < dialogues.length; i++) {
+            if (i < dialogues.length - 1) {
+                dialogues[i].narrativeAfter = dialogues[i+1].narrativeBefore;
+            } else {
+                dialogues[i].narrativeAfter = trailingNarrative;
+            }
+        }
+        
+        // Chunk dialogues into sentences and attach the mapped context
+        for (const d of dialogues) {
+            const chunks = chunkText(d.dialogue);
+            for (const chunk of chunks) {
+                sentences.push({ sentence: chunk, textBefore: d.narrativeBefore, textAfter: d.narrativeAfter });
+            }
+        }
+    } else if (hasAsterisks) {
+        // Fallback for roleplayers who use *asterisks* for narrative instead of quotes
+        const regex = /\*([^*]+)\*/g;
+        let match;
+        let lastIndex = 0;
+        let narrativeBefore = "";
+        let dialogues =[];
+
+        while ((match = regex.exec(text)) !== null) {
+            const dialogueText = text.substring(lastIndex, match.index).trim();
+            const narrativeText = match[1].trim();
+            
+            if (dialogueText) {
+                dialogues.push({ dialogue: dialogueText, narrativeBefore: narrativeBefore, narrativeAfter: narrativeText });
+            }
+            narrativeBefore = narrativeText;
+            lastIndex = regex.lastIndex;
+        }
+        const trailingDialogue = text.substring(lastIndex).trim();
+        if (trailingDialogue) {
+            dialogues.push({ dialogue: trailingDialogue, narrativeBefore: narrativeBefore, narrativeAfter: "" });
+        }
+
+        for (const d of dialogues) {
+            const chunks = chunkText(d.dialogue);
+            for (const chunk of chunks) {
+                sentences.push({ sentence: chunk, textBefore: d.narrativeBefore, textAfter: d.narrativeAfter });
+            }
+        }
+    } else {
+        // No markup, treat the whole block as dialogue
+        const chunks = chunkText(text);
+        for (const chunk of chunks) {
+            sentences.push({ sentence: chunk, textBefore: "", textAfter: "" });
+        }
+    }
+    return sentences;
+}
+
+/**
  * Extracts only the text inside "quotes". Fallback to removing *asterisks* if no quotes exist.
  */
 function extractDialogue(text) {
@@ -367,9 +448,9 @@ Reply EXACTLY with this format and nothing else:
 
 If nothing fits perfectly, use [expression:neutral] [animation:neutral].`;
 
-    const userPrompt = `Context Before: "${textBefore}"
-Current Sentence: "${sentence}"
-Context After: "${textAfter}"`;
+    let userPrompt = `Current Sentence: "${sentence}"`;
+    if (textBefore) userPrompt = `Context Before: "${textBefore}"\n` + userPrompt;
+    if (textAfter) userPrompt += `\nContext After: "${textAfter}"`;
 
     try {
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
