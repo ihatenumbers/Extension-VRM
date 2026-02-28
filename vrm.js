@@ -1104,8 +1104,19 @@ function triggerRandomNaturalMovement(character, modelId) {
     const model_path = avatar.model_path;
     const defaultMotion = extension_settings.vrm.model_settings[model_path]?.['animation_default']?.['motion'];
     
+    // Normalize motion names by removing file extensions and trailing numbers to compare the animation groups
+    let currentMotionGroup = avatar.motion.name;
+    if (currentMotionGroup && currentMotionGroup !== "none") {
+        currentMotionGroup = currentMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
+    }
+    
+    let defaultMotionGroup = defaultMotion;
+    if (defaultMotionGroup && defaultMotionGroup !== "none") {
+        defaultMotionGroup = defaultMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
+    }
+
     // Only trigger if in idle state
-    if (avatar.motion.name === defaultMotion || avatar.motion.name === "none") {
+    if (currentMotionGroup === defaultMotionGroup || avatar.motion.name === "none") {
         const movementKeys = Object.keys(NATURAL_MOVEMENTS);
         const randomKey = movementKeys[Math.floor(Math.random() * movementKeys.length)];
         const movement = NATURAL_MOVEMENTS[randomKey];
@@ -2272,7 +2283,17 @@ function stopTTS(character) {
     const model_path = extension_settings.vrm.character_model_mapping[character];
     if (model_path) {
         const defaultMot = extension_settings.vrm.model_settings[model_path]['animation_default']['motion'];
-        if (avatar.motion.name !== defaultMot) setMotion(character, defaultMot, true, false, false);
+        
+        let currentMotionGroup = avatar.motion.name;
+        if (currentMotionGroup && currentMotionGroup !== "none") {
+            currentMotionGroup = currentMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
+        }
+        let defaultMotionGroup = defaultMot;
+        if (defaultMotionGroup && defaultMotionGroup !== "none") {
+            defaultMotionGroup = defaultMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
+        }
+
+        if (currentMotionGroup !== defaultMotionGroup) setMotion(character, defaultMot, true, false, false);
     }
 }
 
@@ -2396,7 +2417,17 @@ async function playNextInQueue(character) {
             const model_path = extension_settings.vrm.character_model_mapping[character];
             if (model_path) {
                 const defaultMot = extension_settings.vrm.model_settings[model_path]['animation_default']['motion'];
-                if (avatar.motion.name !== defaultMot) setMotion(character, defaultMot, true, false, false);
+                
+                let currentMotionGroup = avatar.motion.name;
+                if (currentMotionGroup && currentMotionGroup !== "none") {
+                    currentMotionGroup = currentMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
+                }
+                let defaultMotionGroup = defaultMot;
+                if (defaultMotionGroup && defaultMotionGroup !== "none") {
+                    defaultMotionGroup = defaultMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
+                }
+
+                if (currentMotionGroup !== defaultMotionGroup) setMotion(character, defaultMot, true, false, false);
             }
         }
         return;
