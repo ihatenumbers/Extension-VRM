@@ -781,7 +781,7 @@ function animate() {
                         tween.isInterrupting = true;
                         tween.rampDuration = Math.min(tween.rampDuration, elapsed);
                         tween.holdDuration = 0;
-                        tween.totalDuration = elapsed + 800; // 0.8 seconds to smoothly fade out
+                        tween.totalDuration = elapsed + 1600; // 1.6 seconds to smoothly fade out
                         tween.targetQuat = avatar.boneOffsets[boneName].clone(); // Fade from current exact offset
                     }
 
