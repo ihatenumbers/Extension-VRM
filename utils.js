@@ -497,7 +497,7 @@ If nothing fits perfectly, use [expression:neutral] [animation:neutral_idle].`;
             }
         }
 
-        console.debug(DEBUG_PREFIX, "Groq Output:", content, "| Mapped Tags:", result);
+        console.debug(DEBUG_PREFIX, "System prompt: ", systemPrompt, "| User prompt: ", userPrompt, "| Groq Output:", content, "| Mapped Tags:", result);
 
         llmTagCache.set(cacheKey, result);
         return result;
