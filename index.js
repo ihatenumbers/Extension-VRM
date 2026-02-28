@@ -343,7 +343,7 @@ jQuery(async () => {
     getContainer().append(windowHtml);
     loadSettings();
 
-    document.body.addEventListener('click', (e) => {
+    document.body.addEventListener('click', async (e) => {
         if (extension_settings.vrm.inworld_tts_enabled) {
             const speakBtn = e.target.closest('.mes_speak');
             if (speakBtn) {
