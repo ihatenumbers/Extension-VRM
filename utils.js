@@ -460,7 +460,7 @@ If nothing fits perfectly, use [expression:neutral] [animation:neutral].`;
                 "Authorization": `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-                model: "llama-3.1-8b-instant",
+                model: "moonshotai/kimi-k2-instruct-0905",
                 messages:[
                     { role: "system", content: systemPrompt },
                     { role: "user", content: userPrompt }
