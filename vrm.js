@@ -427,7 +427,8 @@ async function loadModel(model_path) { // Only cache the model if character=null
         "animation_mixer": new THREE.AnimationMixer(vrm.scene),
         "motion": {
             "name": "none",
-            "animation": null
+            "animation": null,
+            "timeout": null
         },
         "talkEnd": 0,
         "hitboxes": {},
@@ -608,7 +609,7 @@ async function loadAnimation(vrm, hipsHeight, motion_file_path) {
 
 async function setMotion(character, motion_file_path, loop=false, force=false, random=true ) {
     if (current_avatars[character] === undefined) {
-        console.debug(DEBUG_PREFIX,"WARNING requested setMotion of character without vrm loaded:",character,"(loaded",current_avatars,")");
+        console.debug(DEBUG_PREFIX,"WARNING requested setMotion of character without vrm loaded:",character);
         return;
     }
     const model_path = extension_settings.vrm.character_model_mapping[character];
@@ -621,6 +622,11 @@ async function setMotion(character, motion_file_path, loop=false, force=false, r
 
     console.debug(DEBUG_PREFIX,"Switch motion for",character,"from",current_motion_name,"to",motion_file_path,"loop=",loop,"force=",force,"random=",random);
 
+    if (current_avatars[character]["motion"]["timeout"]) {
+        clearTimeout(current_avatars[character]["motion"]["timeout"]);
+        current_avatars[character]["motion"]["timeout"] = null;
+    }
+
     // Disable current animation
     if (motion_file_path == "none") {
         if (current_motion_animation !== null) {
@@ -632,47 +638,48 @@ async function setMotion(character, motion_file_path, loop=false, force=false, r
         return;
     }
 
-    // Pick random animationX
+    // Pick random animation
     const filename = motion_file_path.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
     if (random) {
-        let same_motion = []
+        let same_motion =[]
         for(const i of animations_files) {
             if (i.replace(/\.[^/.]+$/, "").replace(/\d+$/, "") == filename)
             same_motion.push(i)
         }
-        motion_file_path = same_motion[Math.floor(Math.random() * same_motion.length)];
-        console.debug(DEBUG_PREFIX,"Picked a random animation among",same_motion,":",motion_file_path);
+        if (same_motion.length > 0) {
+            motion_file_path = same_motion[Math.floor(Math.random() * same_motion.length)];
+            console.debug(DEBUG_PREFIX,"Picked a random animation among",same_motion,":",motion_file_path);
+        }
     }
 
-    // new animation
     if (current_motion_name != motion_file_path || loop || force) {
 
         if (animations_cache[model_path] !== undefined && animations_cache[model_path][motion_file_path] !== undefined) {
             clip = animations_cache[model_path][motion_file_path];
-        }
-        else {
+        } else {
             clip = await loadAnimation(vrm, hipsHeight, motion_file_path);
-
-            if (clip === null) {
-                return;
-            }
-
-            if (extension_settings.vrm.animations_cache)
+            if (clip === null) return;
+            if (extension_settings.vrm.animations_cache) {
+                if (!animations_cache[model_path]) animations_cache[model_path] = {};
                 animations_cache[model_path][motion_file_path] = clip;
+            }
         }
 
-
-        // create AnimationMixer for VRM
         const new_motion_animation = mixer.clipAction( clip );
 
-        // Fade out current animation
         if ( current_motion_animation !== null ) {
             current_motion_animation.fadeOut( ANIMATION_FADE_TIME );
             current_motion_animation.terminated = true;
-            console.debug(DEBUG_PREFIX,"Fade out previous animation");
         }
         
-        // Fade in new animation
+        if (!loop) {
+            new_motion_animation.clampWhenFinished = true;
+            new_motion_animation.loop = THREE.LoopOnce;
+        } else {
+            new_motion_animation.clampWhenFinished = false;
+            new_motion_animation.loop = THREE.LoopRepeat;
+        }
+
         new_motion_animation
             .reset()
             .setEffectiveTimeScale( 1 )
@@ -680,29 +687,24 @@ async function setMotion(character, motion_file_path, loop=false, force=false, r
             .fadeIn( ANIMATION_FADE_TIME )
             .play();
         new_motion_animation.terminated = false;
-        console.debug(DEBUG_PREFIX,"Loading new animation",motion_file_path);
 
         current_avatars[character]["motion"]["name"] = motion_file_path;
         current_avatars[character]["motion"]["animation"] = new_motion_animation;
 
-        // Fade out animation after full loop
         if (!loop) {
-            setTimeout(() => {
-                if (!new_motion_animation.terminated) {
+            const timeoutId = setTimeout(() => {
+                if (!new_motion_animation.terminated && current_avatars[character]["motion"]["timeout"] === timeoutId) {
                     if (current_avatars[character]["motionQueue"] && current_avatars[character]["motionQueue"].length > 0) {
-                        // Play the next animation in the queue
                         const nextMotion = current_avatars[character]["motionQueue"].shift();
                         setMotion(character, nextMotion, false, true, true);
                     } else {
-                        // Queue empty, return to default idle motion
                         setMotion(character, extension_settings.vrm.model_settings[model_path]["animation_default"]["motion"], true);
                     }
                 }
-            }, clip.duration*1000 - ANIMATION_FADE_TIME*1000);
+            }, clip.duration * 1000 - ANIMATION_FADE_TIME * 1000);
+            
+            current_avatars[character]["motion"]["timeout"] = timeoutId;
         }
-
-        //console.debug(DEBUG_PREFIX,"VRM animation",new_motion_animation);
-        
     }
 }
 
@@ -1133,20 +1135,26 @@ function stopTTS(character) {
     const avatar = current_avatars[character];
     if (!avatar) return;
 
-    avatar.ttsQueue =[]; // Clear upcoming sentences
+    avatar.ttsQueue =[]; 
     if (avatar.currentTtsAudio) {
         avatar.currentTtsAudio.pause();
         avatar.currentTtsAudio.currentTime = 0;
         avatar.currentTtsAudio = null;
     }
-    avatar.isPlayingTts = false;
-
-    // Reset mouth to neutral
-    ['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => {
+    avatar.isPlayingTts = false;['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => {
         if (avatar.vrm && avatar.vrm.expressionManager) {
             avatar.vrm.expressionManager.setValue(shape, 0);
         }
     });
+
+    // Reset to defaults cleanly
+    const model_path = extension_settings.vrm.character_model_mapping[character];
+    if (model_path) {
+        const defaultExp = extension_settings.vrm.model_settings[model_path]['animation_default']['expression'];
+        const defaultMot = extension_settings.vrm.model_settings[model_path]['animation_default']['motion'];
+        if (avatar.expression !== defaultExp) setExpression(character, defaultExp);
+        if (avatar.motion.name !== defaultMot) setMotion(character, defaultMot, true, false, false);
+    }
 }
 
 async function processAndQueueTTS(character, text, clearQueue = false) {
@@ -1202,35 +1210,53 @@ async function processAndQueueTTS(character, text, clearQueue = false) {
 
 function playNextInQueue(character) {
     const avatar = current_avatars[character];
-    if (!avatar || avatar.isPlayingTts || avatar.ttsQueue.length === 0) return;
+    if (!avatar) return;
+
+    // Queue is completely empty, character is done speaking
+    if (avatar.ttsQueue.length === 0) {
+        if (!avatar.isPlayingTts) {
+            const model_path = extension_settings.vrm.character_model_mapping[character];
+            if (model_path) {
+                // Reset to default expression and motion
+                const defaultExp = extension_settings.vrm.model_settings[model_path]['animation_default']['expression'];
+                const defaultMot = extension_settings.vrm.model_settings[model_path]['animation_default']['motion'];
+                if (avatar.expression !== defaultExp) setExpression(character, defaultExp);
+                if (avatar.motion.name !== defaultMot) setMotion(character, defaultMot, true, false, false);
+            }
+        }
+        return;
+    }
+
+    if (avatar.isPlayingTts) return; // Prevent overlapping audio
 
     avatar.isPlayingTts = true;
     const item = avatar.ttsQueue.shift();
 
-    // 1. Setup Audio using robust Blob URL
+    // 1. Setup Audio
     const blob = base64ToBlob(item.audioBase64, 'audio/mp3');
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
-    audio.volume = 1.0; // Ensure it's not muted
+    audio.volume = 1.0; 
     
     avatar.currentTtsAudio = audio;
     avatar.currentVisemes = item.visemes;
 
-    // 2. Trigger predicted LLM expression and animation
-    if (item.expression && item.expression !== "none") {
-        setExpression(character, item.expression);
-    }
-    if (item.motion && item.motion !== "none") {
-        setMotion(character, item.motion, false, true, true);
-    }
+    // 2. EXACT TIMING SYNC: Trigger expression/motion exactly when audio output begins
+    audio.onplay = () => {
+        if (item.expression && item.expression !== "none") {
+            setExpression(character, item.expression);
+        }
+        if (item.motion && item.motion !== "none") {
+            // loop=false ensures it plays once. The timeout in setMotion safely handles the return to idle.
+            setMotion(character, item.motion, false, true, true);
+        }
+    };
 
-    // 3. Cleanup on end and play next chunk
+    // 3. Cleanup on end and check for next chunk
     audio.onended = () => {
-        URL.revokeObjectURL(url); // Free memory
+        URL.revokeObjectURL(url); 
         avatar.isPlayingTts = false;
-        avatar.currentTtsAudio = null;
-        
-        ['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => {
+        avatar.currentTtsAudio = null;['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => {
             if (avatar.vrm && avatar.vrm.expressionManager) {
                 avatar.vrm.expressionManager.setValue(shape, 0);
             }
