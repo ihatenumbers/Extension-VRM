@@ -121,18 +121,26 @@ function animate() {
                 // Find which viseme is active at this exact millisecond
                 const activeViseme = avatar.currentVisemes.find(v => currentTime >= v.startTime && currentTime <= v.endTime);
                 
-                // EXACT FIX: Reset all mouth blendshapes to 0 FIRST
-                ['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => {
-                    vrm.expressionManager.setValue(shape, 0);
-                });
+                // Reset targets to 0
+                ['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => avatar.targetVisemes[shape] = 0);
 
-                // Apply the active viseme
+                // Set target weight for the active viseme
                 if (activeViseme && INWORLD_VISEME_MAP[activeViseme.symbol]) {
-                    const shape = INWORLD_VISEME_MAP[activeViseme.symbol];
-                    if (shape !== 'none') {
-                        vrm.expressionManager.setValue(shape, 1.0);
+                    const mapping = INWORLD_VISEME_MAP[activeViseme.symbol];
+                    if (mapping.shape !== 'none') {
+                        avatar.targetVisemes[mapping.shape] = mapping.weight;
                     }
                 }
+                
+                // Smoothly interpolate (Lerp) current blendshapes to target weights
+                const LERP_SPEED = 20.0; // Higher = snappier, Lower = smoother
+
+                ['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => {
+                    const currentWeight = vrm.expressionManager.getValue(shape) || 0;
+                    const targetWeight = avatar.targetVisemes[shape];
+                    const newWeight = THREE.MathUtils.lerp(currentWeight, targetWeight, deltaTime * LERP_SPEED);
+                    vrm.expressionManager.setValue(shape, newWeight);
+                });
             } 
         }
         // Show/hide helper grid
@@ -436,7 +444,8 @@ async function loadModel(model_path) { // Only cache the model if character=null
         "ttsQueue":[],
         "isPlayingTts": false,
         "currentTtsAudio": null,
-        "currentVisemes":[]
+        "currentVisemes":[],
+        "targetVisemes": { 'aa': 0, 'ee': 0, 'ih': 0, 'oh': 0, 'ou': 0 }
     };
 
     // Hit boxes
@@ -640,15 +649,22 @@ async function setMotion(character, motion_file_path, loop=false, force=false, r
 
     // Pick random animation
     const filename = motion_file_path.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
-    if (random) {
-        let same_motion =[]
-        for(const i of animations_files) {
-            if (i.replace(/\.[^/.]+$/, "").replace(/\d+$/, "") == filename)
-            same_motion.push(i)
+    let same_motion =[];
+    for(const i of animations_files) {
+        if (i.replace(/\.[^/.]+$/, "").replace(/\d+$/, "") == filename) {
+            same_motion.push(i);
         }
-        if (same_motion.length > 0) {
+    }
+    
+    if (same_motion.length > 0) {
+        if (random) {
             motion_file_path = same_motion[Math.floor(Math.random() * same_motion.length)];
             console.debug(DEBUG_PREFIX,"Picked a random animation among",same_motion,":",motion_file_path);
+        } else {
+            // FIX: If random is false but we were given a group name (no extension), append the correct file path
+            if (!motion_file_path.match(/\.(fbx|bvh|vrma)$/i)) {
+                motion_file_path = same_motion[0];
+            }
         }
     }
 

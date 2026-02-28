@@ -446,7 +446,7 @@ Available Animations: ${shortMotions.join(', ')}
 Reply EXACTLY with this format and nothing else:
 [expression:NAME] [animation:NAME]
 
-If nothing fits perfectly, use [expression:neutral] [animation:neutral_idle].`;
+If nothing fits perfectly, use [expression:neutral] [animation:neutral].`;
 
     let userPrompt = `Current Sentence: "${sentence}"`;
     if (textBefore) userPrompt = `Context Before: "${textBefore}"\n` + userPrompt;

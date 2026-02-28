@@ -321,14 +321,14 @@ const HITBOXES = {
 }
 
 const INWORLD_VISEME_MAP = {
-    'aei': 'aa',
-    'o': 'oh',
-    'bmp': 'none', // Closed mouth for B, M, P
-    'fv': 'ih',    // Slightly open for F, V
-    'l': 'ih',
-    'r': 'ou',
-    'th': 'ih',
-    'qw': 'ou',
-    'ee': 'ee',
-    'cdgknstxyz': 'ih' // Default slightly open for other consonants
+    'aei': { shape: 'aa', weight: 0.85 }, // A, E, I (Moderately open)
+    'o': { shape: 'oh', weight: 0.9 },    // O (Rounded open)
+    'bmp': { shape: 'none', weight: 0.0 },// B, M, P (Lips completely closed)
+    'fv': { shape: 'ih', weight: 0.5 },   // F, V (Bottom lip tucked, slightly open)
+    'l': { shape: 'ih', weight: 0.5 },    // L
+    'r': { shape: 'ou', weight: 0.6 },    // R (Slightly rounded)
+    'th': { shape: 'ih', weight: 0.3 },   // TH (Teeth slightly apart)
+    'qw': { shape: 'ou', weight: 0.7 },   // Q, W (Rounded lips)
+    'ee': { shape: 'ee', weight: 0.9 },   // EE (Wide smile)
+    'cdgknstxyz': { shape: 'ih', weight: 0.4 } // Other consonants (Barely open)
 };
