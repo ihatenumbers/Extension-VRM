@@ -1127,37 +1127,6 @@ function triggerRandomNaturalMovement(character, modelId) {
     }
 }
 
-function triggerRandomNaturalMovement(character, modelId) {
-    if (current_avatars[character] === undefined || current_avatars[character]["id"] !== modelId) {
-        return;
-    }
-
-    const avatar = current_avatars[character];
-    const model_path = avatar.model_path;
-    const defaultMotion = extension_settings.vrm.model_settings[model_path]?.['animation_default']?.['motion'];
-    
-    // Only trigger if in idle state
-    if (avatar.motion.name === defaultMotion || avatar.motion.name === "none") {
-        const vrm = avatar["vrm"];
-        const movementKeys = Object.keys(NATURAL_MOVEMENTS);
-        const randomKey = movementKeys[Math.floor(Math.random() * movementKeys.length)];
-        const movement = NATURAL_MOVEMENTS[randomKey];
-
-        movement.action(vrm, character, modelId);
-
-        // Schedule next movement
-        const nextDelay = movement.duration + Math.random() * 5000 + 2000;
-        setTimeout(() => {
-            triggerRandomNaturalMovement(character, modelId);
-        }, nextDelay);
-    } else {
-        // Check again later if a specific animation is currently playing
-        setTimeout(() => {
-            triggerRandomNaturalMovement(character, modelId);
-        }, 5000);
-    }
-}
-
 // background
 let background = undefined;
 
