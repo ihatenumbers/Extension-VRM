@@ -89,8 +89,7 @@ import {
     playTimelineMotions,
     processAndQueueTTS,
     stopTTS,
-    blendExpressions,
-    fetchAutonomousState
+    blendExpressions
 } from "./vrm.js";
 import {
     onEnabledClick,
