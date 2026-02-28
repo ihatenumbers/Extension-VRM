@@ -118,27 +118,29 @@ function animate() {
             if (extension_settings.vrm.inworld_tts_enabled && avatar.isPlayingTts && avatar.currentTtsAudio) {
                 const currentTime = avatar.currentTtsAudio.currentTime;
                 
-                // Find which viseme is active at this exact millisecond
-                const activeViseme = avatar.currentVisemes.find(v => currentTime >= v.startTime && currentTime <= v.endTime);
+                // Added a +0.1s tail to endTime to bridge tiny gaps between phonemes (stops flapping)
+                const activeViseme = avatar.currentVisemes.find(v => currentTime >= v.startTime && currentTime <= (v.endTime + 0.1));
                 
-                // Reset targets to 0
-                ['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => avatar.targetVisemes[shape] = 0);
-
-                // Set target weight for the active viseme
                 if (activeViseme && INWORLD_VISEME_MAP[activeViseme.symbol]) {
-                    const mapping = INWORLD_VISEME_MAP[activeViseme.symbol];
+                    const mapping = INWORLD_VISEME_MAP[activeViseme.symbol];['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => avatar.targetVisemes[shape] = 0);
                     if (mapping.shape !== 'none') {
                         avatar.targetVisemes[mapping.shape] = mapping.weight;
                     }
+                } else {
+                    // Only drop to 0 if there is truly no phoneme playing
+                    ['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => avatar.targetVisemes[shape] = 0);
                 }
                 
                 // Smoothly interpolate (Lerp) current blendshapes to target weights
-                const LERP_SPEED = 20.0; // Higher = snappier, Lower = smoother
-
+                const LERP_SPEED = 12.0; // Slightly slower for more natural, connected speech
                 ['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => {
                     const currentWeight = vrm.expressionManager.getValue(shape) || 0;
-                    const targetWeight = avatar.targetVisemes[shape];
-                    const newWeight = THREE.MathUtils.lerp(currentWeight, targetWeight, deltaTime * LERP_SPEED);
+                    const targetWeight = avatar.targetVisemes[shape] || 0;
+                    
+                    // Close mouth slightly faster than opening it to mimic jaw gravity
+                    const speed = targetWeight === 0 ? LERP_SPEED * 1.5 : LERP_SPEED;
+                    
+                    const newWeight = THREE.MathUtils.lerp(currentWeight, targetWeight, deltaTime * speed);
                     vrm.expressionManager.setValue(shape, newWeight);
                 });
             } 
@@ -616,7 +618,8 @@ async function loadAnimation(vrm, hipsHeight, motion_file_path) {
     return clip;
 }
 
-async function setMotion(character, motion_file_path, loop=false, force=false, random=true ) {
+// Added returnToIdle parameter (defaults to true for hitboxes/commands)
+async function setMotion(character, motion_file_path, loop=false, force=false, random=true, returnToIdle=true ) {
     if (current_avatars[character] === undefined) {
         console.debug(DEBUG_PREFIX,"WARNING requested setMotion of character without vrm loaded:",character);
         return;
@@ -629,14 +632,11 @@ async function setMotion(character, motion_file_path, loop=false, force=false, r
     const current_motion_animation= current_avatars[character]["motion"]["animation"];
     let clip = undefined;
 
-    console.debug(DEBUG_PREFIX,"Switch motion for",character,"from",current_motion_name,"to",motion_file_path,"loop=",loop,"force=",force,"random=",random);
-
     if (current_avatars[character]["motion"]["timeout"]) {
         clearTimeout(current_avatars[character]["motion"]["timeout"]);
         current_avatars[character]["motion"]["timeout"] = null;
     }
 
-    // Disable current animation
     if (motion_file_path == "none") {
         if (current_motion_animation !== null) {
             current_motion_animation.fadeOut(ANIMATION_FADE_TIME);
@@ -647,7 +647,6 @@ async function setMotion(character, motion_file_path, loop=false, force=false, r
         return;
     }
 
-    // Pick random animation
     const filename = motion_file_path.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
     let same_motion =[];
     for(const i of animations_files) {
@@ -659,9 +658,7 @@ async function setMotion(character, motion_file_path, loop=false, force=false, r
     if (same_motion.length > 0) {
         if (random) {
             motion_file_path = same_motion[Math.floor(Math.random() * same_motion.length)];
-            console.debug(DEBUG_PREFIX,"Picked a random animation among",same_motion,":",motion_file_path);
         } else {
-            // FIX: If random is false but we were given a group name (no extension), append the correct file path
             if (!motion_file_path.match(/\.(fbx|bvh|vrma)$/i)) {
                 motion_file_path = same_motion[0];
             }
@@ -707,7 +704,7 @@ async function setMotion(character, motion_file_path, loop=false, force=false, r
         current_avatars[character]["motion"]["name"] = motion_file_path;
         current_avatars[character]["motion"]["animation"] = new_motion_animation;
 
-        if (!loop) {
+        if (!loop && returnToIdle) {
             const timeoutId = setTimeout(() => {
                 if (!new_motion_animation.terminated && current_avatars[character]["motion"]["timeout"] === timeoutId) {
                     if (current_avatars[character]["motionQueue"] && current_avatars[character]["motionQueue"].length > 0) {
@@ -1224,16 +1221,14 @@ async function processAndQueueTTS(character, text, clearQueue = false) {
     }
 }
 
-function playNextInQueue(character) {
+async function playNextInQueue(character) {
     const avatar = current_avatars[character];
     if (!avatar) return;
 
-    // Queue is completely empty, character is done speaking
     if (avatar.ttsQueue.length === 0) {
         if (!avatar.isPlayingTts) {
             const model_path = extension_settings.vrm.character_model_mapping[character];
             if (model_path) {
-                // Reset to default expression and motion
                 const defaultExp = extension_settings.vrm.model_settings[model_path]['animation_default']['expression'];
                 const defaultMot = extension_settings.vrm.model_settings[model_path]['animation_default']['motion'];
                 if (avatar.expression !== defaultExp) setExpression(character, defaultExp);
@@ -1243,12 +1238,12 @@ function playNextInQueue(character) {
         return;
     }
 
-    if (avatar.isPlayingTts) return; // Prevent overlapping audio
+    if (avatar.isPlayingTts) return;
 
     avatar.isPlayingTts = true;
     const item = avatar.ttsQueue.shift();
 
-    // 1. Setup Audio
+    // 1. Setup Audio Blob URL immediately
     const blob = base64ToBlob(item.audioBase64, 'audio/mp3');
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
@@ -1257,24 +1252,32 @@ function playNextInQueue(character) {
     avatar.currentTtsAudio = audio;
     avatar.currentVisemes = item.visemes;
 
-    // 2. EXACT TIMING SYNC: Trigger expression/motion exactly when audio output begins
-    audio.onplay = () => {
-        if (item.expression && item.expression !== "none") {
-            setExpression(character, item.expression);
-        }
-        if (item.motion && item.motion !== "none") {
-            // loop=false ensures it plays once. The timeout in setMotion safely handles the return to idle.
-            setMotion(character, item.motion, false, true, true);
-        }
-    };
+    // 2. TIMING FIX: Trigger animation and expression FIRST
+    if (item.expression && item.expression !== "none") {
+        setExpression(character, item.expression);
+    }
+    if (item.motion && item.motion !== "none") {
+        // Pass false for returnToIdle so they hold the pose!
+        setMotion(character, item.motion, false, true, true, false); 
+    }
 
-    // 3. Cleanup on end and check for next chunk
+    // 3. Wait 800ms to let the animation play out before the voice starts
+    await new Promise(resolve => setTimeout(resolve, 800));
+
+    // 4. Safety Check: If user clicked "Stop" during the 800ms delay, abort playback
+    if (!avatar.isPlayingTts || avatar.currentTtsAudio !== audio) {
+        URL.revokeObjectURL(url);
+        return; 
+    }
+
+    // 5. Play Audio
     audio.onended = () => {
         URL.revokeObjectURL(url); 
         avatar.isPlayingTts = false;
         avatar.currentTtsAudio = null;['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => {
             if (avatar.vrm && avatar.vrm.expressionManager) {
                 avatar.vrm.expressionManager.setValue(shape, 0);
+                avatar.targetVisemes[shape] = 0;
             }
         });
         
