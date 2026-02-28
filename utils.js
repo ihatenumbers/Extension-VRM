@@ -346,11 +346,21 @@ async function fetchSmallLLMTag(sentence, textBefore, textAfter, availableExpres
         return llmTagCache.get(cacheKey);
     }
 
+    const motionMap = {};
+    const shortMotions =[];
+    
+    for (const fullPath of availableMotions) {
+        // Extract just the filename (e.g., "/assets/vrm/animation/anger" -> "anger")
+        const shortName = fullPath.substring(fullPath.lastIndexOf('/') + 1);
+        motionMap[shortName] = fullPath;
+        shortMotions.push(shortName);
+    }
+
     const systemPrompt = `You are an animation director for a 3D avatar.
 Choose ONE expression and ONE animation that best match the "Current Sentence".
 
 Available Expressions: ${availableExpressions.join(', ')}
-Available Animations: ${availableMotions.join(', ')}
+Available Animations: ${shortMotions.join(', ')}
 
 Reply EXACTLY with this format and nothing else:
 [expression:NAME] [animation:NAME]
@@ -383,7 +393,7 @@ Context After: "${textAfter}"`;
         const data = await response.json();
         const content = data.choices[0].message.content;
         
-        // Parse the tags: [expression:cheekpuff][animation:anger]
+        // Parse the tags: [expression:cheekpuff] [animation:anger]
         let expressionMatch = content.match(/\[expression:(.*?)\]/i);
         let motionMatch = content.match(/\[animation:(.*?)\]/i);
 
@@ -392,11 +402,21 @@ Context After: "${textAfter}"`;
             motion: motionMatch ? motionMatch[1].trim() : null
         };
 
-        // Fallback validation: Ensure LLM didn't hallucinate a non-existent file
-        if (result.expression && !availableExpressions.includes(result.expression)) result.expression = null;
-        if (result.motion && !availableMotions.includes(result.motion)) result.motion = null;
+        if (result.expression && result.expression !== "none" && !availableExpressions.includes(result.expression)) {
+            result.expression = null;
+        }
 
-        console.debug(DEBUG_PREFIX, "System prompt: ", systemPrompt, "| User prompt: ", userPrompt, "| Groq Output:", content, "| Parsed Tags:", result);
+        // --- NEW: VALIDATE SHORT NAME AND MAP BACK TO FULL PATH ---
+        if (result.motion && result.motion !== "none") {
+            if (shortMotions.includes(result.motion)) {
+                // LLM said "anger", we map it to "/assets/vrm/animation/anger"
+                result.motion = motionMap[result.motion]; 
+            } else {
+                result.motion = null; // Hallucinated animation, skip it
+            }
+        }
+
+        console.debug(DEBUG_PREFIX, "Groq Output:", content, "| Mapped Tags:", result);
 
         llmTagCache.set(cacheKey, result);
         return result;
