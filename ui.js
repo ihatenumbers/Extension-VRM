@@ -33,6 +33,7 @@ import {
 export {
     onEnabledClick,
     onFollowCameraClick,
+    onCursorTrackingClick,
     onBlinkClick,
     onTtsLipsSyncClick,
     onHitboxesClick,
@@ -84,6 +85,11 @@ async function onEnabledClick() {
 
 async function onFollowCameraClick() {
     extension_settings.vrm.follow_camera = $('#vrm_follow_camera_checkbox').is(':checked');
+    saveSettingsDebounced();
+}
+
+async function onCursorTrackingClick() {
+    extension_settings.vrm.cursor_tracking = $('#vrm_cursor_tracking_checkbox').is(':checked');
     saveSettingsDebounced();
 }
 

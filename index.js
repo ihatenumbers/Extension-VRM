@@ -94,6 +94,7 @@ import {
 import {
     onEnabledClick,
     onFollowCameraClick,
+    onCursorTrackingClick,
     onBlinkClick,
     onTtsLipsSyncClick,
     onAutoSendHitboxMessageClick,
@@ -139,6 +140,7 @@ const defaultSettings = {
     // Global settings
     enabled: false,
     follow_camera: false,
+    cursor_tracking: false,
     tts_lips_sync: false,
     blink: false,
     auto_send_hitbox_message: false,
@@ -195,6 +197,7 @@ function loadSettings() {
 
     $('#vrm_enabled_checkbox').prop('checked', extension_settings.vrm.enabled);
     $('#vrm_follow_camera_checkbox').prop('checked', extension_settings.vrm.follow_camera);
+    $('#vrm_cursor_tracking_checkbox').prop('checked', extension_settings.vrm.cursor_tracking);
     $('#vrm_blink_checkbox').prop('checked', extension_settings.vrm.blink);
     $('#vrm_tts_lips_sync_checkbox').prop('checked', extension_settings.vrm.tts_lips_sync);
     $('#vrm_auto_send_hitbox_message_checkbox').prop('checked', extension_settings.vrm.auto_send_hitbox_message);
@@ -223,6 +226,7 @@ function loadSettings() {
     $('#vrm_autonomous_agent_checkbox').on('click', () => {extension_settings.vrm.autonomous_agent = $('#vrm_autonomous_agent_checkbox').is(':checked'); saveSettingsDebounced(); if (extension_settings.vrm.autonomous_agent) startAutonomousLoop();});
     $('#vrm_enabled_checkbox').on('click', onEnabledClick);
     $('#vrm_follow_camera_checkbox').on('click', onFollowCameraClick);
+    $('#vrm_cursor_tracking_checkbox').on('click', onCursorTrackingClick);
     $('#vrm_blink_checkbox').on('click', onBlinkClick);
     $('#vrm_tts_lips_sync_checkbox').on('click', onTtsLipsSyncClick);
     $('#vrm_auto_send_hitbox_message_checkbox').on('click', onAutoSendHitboxMessageClick);

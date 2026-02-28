@@ -94,11 +94,9 @@ let cursorTiltState = {};
 let cursorPosition = { x: 0, y: 0 };
 let activeNaturalMovements = {};
 
-// Efficient passive listener that only does math when the UI option is toggled ON
+// Passive listener: only updates math when cursor tracking is ON
 window.addEventListener('mousemove', (event) => {
-    const isTrackingEnabled = extension_settings.vrm.follow_camera || extension_settings.vrm.cursorTrackingEnabled;
-    if (isTrackingEnabled) {
-        // Pre-calculate Normalized Device Coordinates (NDC) here instead of in the render loop
+    if (extension_settings.vrm && extension_settings.vrm.cursor_tracking) {
         cursorPosition.x = (event.clientX / window.innerWidth) * 2 - 1;
         cursorPosition.y = -(event.clientY / window.innerHeight) * 2 + 1;
     }
@@ -1114,13 +1112,13 @@ function triggerRandomNaturalMovement(character, modelId) {
 
         movement.action(avatar.vrm, character, modelId);
 
-        // Schedule next movement and save the ID
+        // Schedule next movement
         const nextDelay = movement.duration + Math.random() * 5000 + 2000;
         avatar.naturalMovementTimer = setTimeout(() => {
             triggerRandomNaturalMovement(character, modelId);
         }, nextDelay);
     } else {
-        // Check again later if a specific animation is currently playing
+        // Check again later if a specific animation is playing
         avatar.naturalMovementTimer = setTimeout(() => {
             triggerRandomNaturalMovement(character, modelId);
         }, 5000);
@@ -1174,28 +1172,38 @@ function animate() {
             // Saccades are fast eye movements. High lerp factor = snappy movement.
             avatar.eyeCurrentOffset.lerp(avatar.eyeTargetOffset, deltaTime * 15.0);
 
-            if (extension_settings.vrm.follow_camera) {
-                if (isTrackingEnabled) {
-                // Initialize reusable vectors once to prevent garbage collection frame-stutters
+            if (extension_settings.vrm.cursor_tracking) {
+                // Initialize reusable vectors once
                 if (!avatar.cursorVec) avatar.cursorVec = new THREE.Vector3();
                 if (!avatar.cursorLerpTarget) avatar.cursorLerpTarget = new THREE.Vector3();
                 if (!avatar.cameraOffsetVec) avatar.cameraOffsetVec = new THREE.Vector3();
                 
-                // Unproject the 2D mouse coordinates into 3D space
+                // Convert mouse coordinates to 3D space
                 avatar.cursorVec.set(cursorPosition.x, cursorPosition.y, 0.5);
                 avatar.cursorVec.unproject(camera);
                 
-                // Calculate direction and multiply by distance (5.0)
+                // Target position based on cursor (placed 5 units away)
                 avatar.cursorVec.sub(camera.position).normalize().multiplyScalar(5.0).add(camera.position);
                 
                 // Smoothly lerp towards the cursor position
                 avatar.cursorLerpTarget.lerp(avatar.cursorVec, deltaTime * 5.0);
                 avatar.personalLookAtTarget.position.copy(avatar.cursorLerpTarget);
                 
-                // Add natural eye darts around the cursor
+                // Add natural eye dart offset
                 avatar.cameraOffsetVec.copy(avatar.eyeCurrentOffset).applyQuaternion(camera.quaternion);
                 avatar.personalLookAtTarget.position.add(avatar.cameraOffsetVec);
                 
+                vrm.lookAt.target = avatar.personalLookAtTarget;
+
+            } else if (extension_settings.vrm.follow_camera) {
+                // Start at the camera's position
+                camera.getWorldPosition(avatar.personalLookAtTarget.position);
+                
+                // Transform offset so it's relative to the camera view
+                const cameraOffset = avatar.eyeCurrentOffset.clone();
+                cameraOffset.applyQuaternion(camera.quaternion);
+                
+                avatar.personalLookAtTarget.position.add(cameraOffset);
                 vrm.lookAt.target = avatar.personalLookAtTarget;
             } else {
                 // Look straight ahead of the model + the offset
@@ -1203,14 +1211,11 @@ function animate() {
                 if (head) {
                     head.getWorldPosition(avatar.personalLookAtTarget.position);
                     
-                    // Default "forward" is +Z (towards the camera)
                     const forward = new THREE.Vector3(0, 0, 1);
                     forward.applyQuaternion(avatar.objectContainer.quaternion);
                     
-                    // Place target 5 units in front
                     avatar.personalLookAtTarget.position.add(forward.multiplyScalar(5.0));
                     
-                    // Apply offset relative to the character's facing direction
                     const localOffset = avatar.eyeCurrentOffset.clone();
                     localOffset.applyQuaternion(avatar.objectContainer.quaternion);
                     
