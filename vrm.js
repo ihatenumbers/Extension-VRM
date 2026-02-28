@@ -721,22 +721,20 @@ async function setMotion(character, motion_file_path, loop=false, force=false, r
     }
 }
 
-async function updateExpression(chat_id) {
+async function updateExpression(chat_id, skipMotion = false) {
     const message = getContext().chat[chat_id];
     const character = message.name;
     const model_path = extension_settings.vrm.character_model_mapping[character];
 
     console.debug(DEBUG_PREFIX,'received new message :', message.mes);
 
-    if (message.is_user)
-        return;
-
+    if (message.is_user) return;
     if (model_path === undefined) {
         console.debug(DEBUG_PREFIX, 'No model assigned to', character);
         return;
     }
 
-    const tags = [...message.mes.matchAll(/\[(.*?)\]/g)].map(m => m[1]);
+    const tags =[...message.mes.matchAll(/\[(.*?)\]/g)].map(m => m[1]);
     const timelineMotions =[];
 
     if (tags.length > 0) {
@@ -751,12 +749,11 @@ async function updateExpression(chat_id) {
     }
 
     if (timelineMotions.length > 0) {
-        console.debug(DEBUG_PREFIX, 'Playing timeline animations:', timelineMotions);
+        if (!skipMotion) {
+            console.debug(DEBUG_PREFIX, 'Playing timeline animations:', timelineMotions);
+            playTimelineMotions(character, timelineMotions);
+        }
         
-        // Push the animations to the queue
-        playTimelineMotions(character, timelineMotions);
-
-        // We still classify the face expression normally based on the text
         const expression = await getExpressionLabel(message.mes);
         let model_expression = extension_settings.vrm.model_settings[model_path]['classify_mapping'][expression]?.['expression'] || 'none';
         if (model_expression == 'none') {
@@ -764,30 +761,27 @@ async function updateExpression(chat_id) {
         }
         await setExpression(character, model_expression);
 
-        return; // Exit early so we don't overwrite our timeline with the default classification motion
+        return; 
     }
 
     const expression = await getExpressionLabel(message.mes);
     let model_expression = extension_settings.vrm.model_settings[model_path]['classify_mapping'][expression]['expression'];
     let model_motion = extension_settings.vrm.model_settings[model_path]['classify_mapping'][expression]['motion'];
 
-    console.debug(DEBUG_PREFIX,'Detected expression in message:',expression);
-
-    // Fallback animations
     if (model_expression == 'none') {
-        console.debug(DEBUG_PREFIX,'Expression is none, applying default expression', model_expression);
         model_expression = extension_settings.vrm.model_settings[model_path]['animation_default']['expression'];
     }
 
     if (model_motion == 'none') {
-        console.debug(DEBUG_PREFIX,'Motion is none, playing default motion',model_motion);
         model_motion = extension_settings.vrm.model_settings[model_path]['animation_default']['motion'];
     }
 
-    console.debug(DEBUG_PREFIX,'Playing expression',expression,':', model_expression, model_motion);
-
     await setExpression(character, model_expression);
-    await setMotion(character, model_motion);
+    
+    // Skip overriding the motion if Inworld TTS is about to take over
+    if (!skipMotion) {
+        await setMotion(character, model_motion);
+    }
 }
 
 

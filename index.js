@@ -291,8 +291,8 @@ function loadSettings() {
         const message = getContext().chat[chat_id];
         
         if (extension_settings.vrm.inworld_tts_enabled && !message.is_user && !message.is_system) {
-            updateExpression(chat_id); 
-            processAndQueueTTS(message.name, message.mes, true); // true = clear queue and play immediately
+            await updateExpression(chat_id, true);
+            processAndQueueTTS(message.name, message.mes, true); 
         } else {
             updateExpression(chat_id);
             talk(chat_id);
@@ -303,7 +303,7 @@ function loadSettings() {
         const message = getContext().chat[chat_id];
         
         if (extension_settings.vrm.inworld_tts_enabled && !message.is_user && !message.is_system) {
-            updateExpression(chat_id); 
+            await updateExpression(chat_id, true);
             processAndQueueTTS(message.name, message.mes, true);
         } else {
             updateExpression(chat_id);
@@ -356,7 +356,7 @@ jQuery(async () => {
                     const message = getContext().chat[messageId];
 
                     if (message && !message.is_system) {
-                        updateExpression(messageId); 
+                        await updateExpression(messageId, true); 
                         processAndQueueTTS(message.name, message.mes, true); 
                     }
                 }
