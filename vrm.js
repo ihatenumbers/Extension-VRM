@@ -533,10 +533,11 @@ async function setExpression(character, value) {
     const current_expression = current_avatars[character]["expression"];
     console.debug(DEBUG_PREFIX,"Switch expression of",character,"from",current_expression,"to",value);
     
-    if (value == "none")
-        value = "neutral";
+    // If the value is "none", keep the current cached expression instead of defaulting to neutral
+    if (value === "none" || value === undefined) {
+        return; 
+    }
 
-    // Rest all expressions
     for(const expression in vrm.expressionManager.expressionMap)
         vrm.expressionManager.setValue(expression, 0.0);
 
@@ -1098,9 +1099,7 @@ function stopTTS(character) {
 
     const model_path = extension_settings.vrm.character_model_mapping[character];
     if (model_path) {
-        const defaultExp = extension_settings.vrm.model_settings[model_path]['animation_default']['expression'];
         const defaultMot = extension_settings.vrm.model_settings[model_path]['animation_default']['motion'];
-        if (avatar.expression !== defaultExp) setExpression(character, defaultExp);
         if (avatar.motion.name !== defaultMot) setMotion(character, defaultMot, true, false, false);
     }
 }
