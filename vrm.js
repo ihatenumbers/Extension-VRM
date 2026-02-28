@@ -103,62 +103,23 @@ window.addEventListener('mousemove', (event) => {
 }, { passive: true });
 
 function applyNaturalMovementWithSlerp(vrm, boneName, movementConfig, character, modelId, duration = 12000) {
-    const bone = vrm.humanoid?.getNormalizedBoneNode(boneName);
-    if (!bone) return;
+    const avatar = current_avatars[character];
+    if (!avatar || avatar.id !== modelId) return;
 
-    const startTime = Date.now();
-    const baseQuat = bone.quaternion.clone();
-    const baseEuler = new THREE.Euler().setFromQuaternion(baseQuat);
-    const targetEuler = new THREE.Euler(
-        baseEuler.x + movementConfig.x,
-        baseEuler.y + movementConfig.y,
-        baseEuler.z + movementConfig.z
-    );
-    const targetQuat = new THREE.Quaternion().setFromEuler(targetEuler);
+    if (!avatar.boneOffsets) avatar.boneOffsets = {};
+    if (!avatar.boneOffsets[boneName]) avatar.boneOffsets[boneName] = new THREE.Quaternion();
 
-    const rampDuration = duration * 0.3;
-    const holdDuration = duration * 0.4;
-    const totalDuration = duration;
+    if (!avatar.boneTweens) avatar.boneTweens = {};
 
-    function updateMovement() {
-        if (current_avatars[character]?.vrm !== vrm ||
-            current_avatars[character]?.["id"] !== modelId) {
-            return;
-        }
-
-        const now = Date.now();
-        const elapsed = now - startTime;
-
-        if (elapsed >= totalDuration) {
-            bone.quaternion.slerp(baseQuat, 0.03);
-            if (bone.quaternion.angleTo(baseQuat) > 0.001) {
-                requestAnimationFrame(updateMovement);
-            } else {
-                bone.quaternion.copy(baseQuat);
-                if (activeNaturalMovements[character] === updateMovement) {
-                    delete activeNaturalMovements[character];
-                }
-            }
-            return;
-        }
-
-        let t = 0;
-        if (elapsed < rampDuration) {
-            t = easeInOutCubic(elapsed / rampDuration);
-            bone.quaternion.slerpQuaternions(baseQuat, targetQuat, t);
-        } else if (elapsed < rampDuration + holdDuration) {
-            bone.quaternion.copy(targetQuat);
-        } else {
-            const rampDownElapsed = elapsed - rampDuration - holdDuration;
-            t = easeInOutCubic(rampDownElapsed / (totalDuration - rampDuration - holdDuration));
-            bone.quaternion.slerpQuaternions(targetQuat, baseQuat, t);
-        }
-
-        requestAnimationFrame(updateMovement);
-    }
-
-    activeNaturalMovements[character] = updateMovement;
-    updateMovement();
+    // Register a smooth offset tween instead of hijacking the bone directly
+    avatar.boneTweens[boneName] = {
+        startTime: Date.now(),
+        rampDuration: duration * 0.3,
+        holdDuration: duration * 0.4,
+        totalDuration: duration,
+        startQuat: avatar.boneOffsets[boneName].clone(),
+        targetQuat: new THREE.Quaternion().setFromEuler(new THREE.Euler(movementConfig.x, movementConfig.y, movementConfig.z))
+    };
 }
 
 function easeInOutCubic(t) {
@@ -167,19 +128,18 @@ function easeInOutCubic(t) {
 
 // Helper to apply brief expressions during idle movements
 function applyIdleExpression(vrm, character, expressionName, intensity = 0.7, duration = 2000, useClassifiedMapping = true) {
-    if (!vrm.expressionManager) return;
+    const avatar = current_avatars[character];
+    if (!avatar) return;
 
     let finalExpression = expressionName;
     let finalIntensity = intensity;
 
-    // Check if this is a winking expression - set flag to prevent automatic blink interference
     const isWinking = expressionName === 'blinkLeft' || expressionName === 'blinkRight';
-    if (isWinking && current_avatars[character]) {
-        current_avatars[character].winking = true;
-        current_avatars[character].customWinking = true;
+    if (isWinking) {
+        avatar.winking = true;
+        avatar.customWinking = true;
     }
 
-    // Check if expressionName is a classified emotion and get mapping
     if (useClassifiedMapping) {
         const model_path = extension_settings.vrm.character_model_mapping[character];
         if (model_path && extension_settings.vrm.model_settings[model_path]) {
@@ -189,7 +149,6 @@ function applyIdleExpression(vrm, character, expressionName, intensity = 0.7, du
                 if (mapping.expression && mapping.expression !== 'none') {
                     finalExpression = mapping.expression;
                 }
-                // Use intensity from mapping if available
                 if (mapping.intensity !== undefined) {
                     finalIntensity = mapping.intensity;
                 }
@@ -197,154 +156,82 @@ function applyIdleExpression(vrm, character, expressionName, intensity = 0.7, du
         }
     }
 
-    // Check for custom blend shape mapping
     const blendShapeMapping = getBlendShapeMapping(character, finalExpression);
     if (blendShapeMapping && blendShapeMapping.blendShapes) {
         applyCustomBlendShapeGroupIdle(vrm, character, finalExpression, blendShapeMapping, finalIntensity, duration, isWinking);
         return;
     }
 
-    const startTime = Date.now();
-    const rampDuration = duration * 0.3;
-    const holdDuration = duration * 0.4;
+    // Pass expression to the centralized target array for seamless lerping
+    avatar.targetExpressions[finalExpression] = finalIntensity;
 
-    function updateExpression() {
-        if (!current_avatars[character]) return;
-
-        const elapsed = Date.now() - startTime;
-
-        if (elapsed >= duration) {
-            // Explicitly reset expression to 0 for blink-type expressions
-            vrm.expressionManager.setValue(finalExpression, 0);
-            // Clear winking state - let eyes return to neutral
-            if (isWinking && current_avatars[character]) {
-                vrm.expressionManager.setValue('blinkLeft', 0);
-                vrm.expressionManager.setValue('blinkRight', 0);
+    setTimeout(() => {
+        if (current_avatars[character]) {
+            current_avatars[character].targetExpressions[finalExpression] = 0;
+            if (isWinking) {
+                current_avatars[character].targetExpressions['blinkLeft'] = 0;
+                current_avatars[character].targetExpressions['blinkRight'] = 0;
                 current_avatars[character].winking = false;
                 current_avatars[character].customWinking = false;
             }
-            return;
         }
-
-        let amplitude = 0;
-        if (elapsed < rampDuration) {
-            amplitude = easeInOutCubic(elapsed / rampDuration);
-        } else if (elapsed < rampDuration + holdDuration) {
-            amplitude = 1;
-        } else {
-            amplitude = 1 - easeInOutCubic((elapsed - rampDuration - holdDuration) / (duration - rampDuration - holdDuration));
-        }
-
-        vrm.expressionManager.setValue(finalExpression, finalIntensity * amplitude);
-        requestAnimationFrame(updateExpression);
-    }
-
-    updateExpression();
+    }, duration * 0.7);
 }
 
 // Helper to apply custom blend shape groups during idle animations
 function applyCustomBlendShapeGroupIdle(vrm, character, expressionName, blendMapping, intensity = 1.0, duration = 2000, isWinking = false) {
-    if (!vrm || !vrm.expressionManager) return;
+    const avatar = current_avatars[character];
+    if (!avatar) return;
 
-    // Set winking flag if this is a wink expression
-    if (isWinking && current_avatars[character]) {
-        current_avatars[character].winking = true;
-        current_avatars[character].customWinking = true;
+    if (isWinking) {
+        avatar.winking = true;
+        avatar.customWinking = true;
     }
 
-    const startTime = Date.now();
-    const rampDuration = duration * 0.3;
-    const holdDuration = duration * 0.4;
     const blendShapes = blendMapping.blendShapes || {};
 
-    function updateBlendShapes() {
-        if (!current_avatars[character]) return;
+    for (const [blendShapeName, weight] of Object.entries(blendShapes)) {
+        const adjustedIntensity = Math.min(1.0, Math.max(0.0, weight * intensity));
+        avatar.targetExpressions[blendShapeName] = adjustedIntensity;
+    }
 
-        const elapsed = Date.now() - startTime;
-
-        if (elapsed >= duration) {
-            // Explicitly reset all blend shapes to 0
+    setTimeout(() => {
+        if (current_avatars[character]) {
             for (const blendShapeName in blendShapes) {
-                vrm.expressionManager.setValue(blendShapeName, 0);
+                current_avatars[character].targetExpressions[blendShapeName] = 0;
             }
-            // Clear winking state - let eyes return to neutral
-            if (current_avatars[character]) {
-                vrm.expressionManager.setValue('blinkLeft', 0);
-                vrm.expressionManager.setValue('blinkRight', 0);
+            if (isWinking) {
+                current_avatars[character].targetExpressions['blinkLeft'] = 0;
+                current_avatars[character].targetExpressions['blinkRight'] = 0;
                 current_avatars[character].winking = false;
                 current_avatars[character].customWinking = false;
             }
-            return;
         }
-
-        let amplitude = 0;
-        if (elapsed < rampDuration) {
-            amplitude = easeInOutCubic(elapsed / rampDuration);
-        } else if (elapsed < rampDuration + holdDuration) {
-            amplitude = 1;
-        } else {
-            amplitude = 1 - easeInOutCubic((elapsed - rampDuration - holdDuration) / (duration - rampDuration - holdDuration));
-        }
-
-        for (const [blendShapeName, weight] of Object.entries(blendShapes)) {
-            const adjustedIntensity = Math.min(1.0, Math.max(0.0, weight * intensity * amplitude));
-            vrm.expressionManager.setValue(blendShapeName, adjustedIntensity);
-        }
-
-        requestAnimationFrame(updateBlendShapes);
-    }
-
-    updateBlendShapes();
+    }, duration * 0.7);
 }
 
 // Helper to apply subtle model Y rotation during idle movements
 function applyModelRotation(vrm, character, modelId, targetYaw, duration = 7000) {
-    const objectContainer = current_avatars[character]?.["objectContainer"];
-    if (!objectContainer) return;
-    
-    const startYaw = objectContainer.rotation.y;
-    const startTime = Date.now();
-    const rampDuration = duration * 0.3;
-    const holdDuration = duration * 0.4;
-    const totalDuration = duration;
-    
-    function updateRotation() {
-        if (current_avatars[character]?.["id"] !== modelId) return;
-        
-        const elapsed = Date.now() - startTime;
-        
-        if (elapsed >= totalDuration) {
-            // Return to base
-            objectContainer.rotation.y += (startYaw - objectContainer.rotation.y) * 0.03;
-            if (Math.abs(objectContainer.rotation.y - startYaw) > 0.001) {
-                requestAnimationFrame(updateRotation);
-            }
-            return;
-        }
-        
-        let amplitude = 0;
-        if (elapsed < rampDuration) {
-            amplitude = easeInOutCubic(elapsed / rampDuration);
-        } else if (elapsed < rampDuration + holdDuration) {
-            amplitude = 1;
-        } else {
-            amplitude = 1 - easeInOutCubic((elapsed - rampDuration - holdDuration) / rampDuration);
-        }
-        
-        const currentTarget = startYaw + (targetYaw * amplitude);
-        objectContainer.rotation.y += (currentTarget - objectContainer.rotation.y) * 0.04;
-        
-        requestAnimationFrame(updateRotation);
-    }
-    
-    updateRotation();
+    const avatar = current_avatars[character];
+    if (!avatar || avatar.id !== modelId) return;
+
+    if (avatar.modelRotationOffset === undefined) avatar.modelRotationOffset = 0;
+
+    avatar.modelRotationTween = {
+        startTime: Date.now(),
+        rampDuration: duration * 0.3,
+        holdDuration: duration * 0.4,
+        totalDuration: duration,
+        startYaw: avatar.modelRotationOffset,
+        targetYaw: targetYaw
+    };
 }
 
 // Helper to get available blend shape names from VRM model
 function getAvailableBlendShapeNames(vrm) {
     if (!vrm || !vrm.blendShapeProxy) return [];
 
-    const blendShapeNames = [];
+    const blendShapeNames =[];
     const expressionMap = vrm.expressionManager?.expressionMap || {};
 
     for (const expressionName in expressionMap) {
@@ -417,30 +304,15 @@ const NATURAL_MOVEMENTS = {
       const angleX = (Math.random() * 0.16 - 0.08);
       const angleZ = (Math.random() * 0.1 - 0.05) * direction;
 
-      // Head movement
-      const headConfig = {
-        x: angleX,
-        y: angleY,
-        z: angleZ
-      };
+      const headConfig = { x: angleX, y: angleY, z: angleZ };
       applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId, 12000);
 
-      // Neck follows with natural follow-through
-      const neck = vrm.humanoid?.getNormalizedBoneNode("neck");
-      if (neck) {
-        setTimeout(() => {
-          const neckConfig = {
-            x: angleX * 0.5,
-            y: angleY * 0.42,
-            z: angleZ * 0.6
-          };
-          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 11800);
-        }, 200);
-      }
+      setTimeout(() => {
+        const neckConfig = { x: angleX * 0.5, y: angleY * 0.42, z: angleZ * 0.6 };
+        applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 11800);
+      }, 200);
 
-      // More pronounced model rotation to follow head
-      const modelRotation = direction * (Math.random() * 0.1 + 0.08);
-      applyModelRotation(vrm, character, modelId, modelRotation, 10000);
+      applyModelRotation(vrm, character, modelId, direction * (Math.random() * 0.1 + 0.08), 10000);
     }
   },
   headTilt: {
@@ -449,44 +321,23 @@ const NATURAL_MOVEMENTS = {
     description: 'curious head tilt',
     action: (vrm, character, modelId) => {
       const direction = Math.random() > 0.5 ? 1 : -1;
-      // More exaggerated tilt
       const angleZ = (Math.random() * 0.35 + 0.27) * direction;
       const angleX = (Math.random() * 0.12 - 0.06);
       const angleY = (Math.random() * 0.16 - 0.08) * direction;
 
-      // Apply to head
-      const headConfig = {
-        x: angleX,
-        y: angleY,
-        z: angleZ
-      };
+      const headConfig = { x: angleX, y: angleY, z: angleZ };
       applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId, 12000);
 
-      // Add neck follow with more natural movement
-      const neck = vrm.humanoid?.getNormalizedBoneNode("neck");
-      if (neck) {
-        setTimeout(() => {
-          const neckConfig = {
-            x: angleX * 0.5,
-            y: angleY * 0.35,
-            z: angleZ * 0.57
-          };
-          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 11800);
-        }, 200);
-      }
+      setTimeout(() => {
+        const neckConfig = { x: angleX * 0.5, y: angleY * 0.35, z: angleZ * 0.57 };
+        applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 11800);
+      }, 200);
 
-      // 30% chance to wink during head tilt
       if (Math.random() > 0.7) {
         const winkEye = direction > 0 ? 'blinkLeft' : 'blinkRight';
-        setTimeout(() => {
-          applyIdleExpression(vrm, character, winkEye, 0.9, 1500);
-        }, 1000);
-      }
-      // 40% chance for curious smile
-      else if (Math.random() > 0.6) {
-        setTimeout(() => {
-          applyIdleExpression(vrm, character, 'happy', 0.4, 2000);
-        }, 500);
+        setTimeout(() => applyIdleExpression(vrm, character, winkEye, 0.9, 1500), 1000);
+      } else if (Math.random() > 0.6) {
+        setTimeout(() => applyIdleExpression(vrm, character, 'happy', 0.4, 2000), 500);
       }
     }
   },
@@ -502,48 +353,24 @@ const NATURAL_MOVEMENTS = {
       const angleY = (Math.random() * 0.28 + 0.13) * directionY;
       const angleZ = (Math.random() * 0.16 - 0.08);
 
-      // More noticeable model rotation with glance
-      const modelRotation = directionY * (Math.random() * 0.07 + 0.05);
-      applyModelRotation(vrm, character, modelId, modelRotation, 9000);
+      applyModelRotation(vrm, character, modelId, directionY * (Math.random() * 0.07 + 0.05), 9000);
 
-      // 50% chance for curious expression
       if (Math.random() > 0.5) {
         setTimeout(() => applyIdleExpression(vrm, character, 'surprised', 0.5, 2000), 400);
       }
 
-      // Head glance - more pronounced
-      const headConfig = {
-        x: angleX,
-        y: angleY,
-        z: angleZ
-      };
+      const headConfig = { x: angleX, y: angleY, z: angleZ };
       applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId, 10000);
 
-      // Neck follows naturally
-      const neck = vrm.humanoid?.getNormalizedBoneNode("neck");
-      if (neck) {
-        setTimeout(() => {
-          const neckConfig = {
-            x: angleX * 0.5,
-            y: angleY * 0.54,
-            z: angleZ * 0.5
-          };
-          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 9700);
-        }, 300);
-      }
+      setTimeout(() => {
+        const neckConfig = { x: angleX * 0.5, y: angleY * 0.54, z: angleZ * 0.5 };
+        applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 9700);
+      }, 300);
 
-      // Spine twist for more natural look
-      const spine = vrm.humanoid?.getNormalizedBoneNode("spine");
-      if (spine) {
-        setTimeout(() => {
-          const spineConfig = {
-            x: angleX * 0.25,
-            y: angleY * 0.43,
-            z: angleZ * 0.38
-          };
-          applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId, 9500);
-        }, 500);
-      }
+      setTimeout(() => {
+        const spineConfig = { x: angleX * 0.25, y: angleY * 0.43, z: angleZ * 0.38 };
+        applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId, 9500);
+      }, 500);
     }
   },
   lookAround: {
@@ -551,234 +378,59 @@ const NATURAL_MOVEMENTS = {
     duration: 19000,
     description: 'looking around',
     action: (vrm, character, modelId) => {
-      // Model rotation that follows to look pattern - more dynamic
-      const modelRotation1 = 0.09;
-      const modelRotation2 = -0.08;
+      setTimeout(() => applyModelRotation(vrm, character, modelId, 0.09, 4500), 500);
+      setTimeout(() => applyModelRotation(vrm, character, modelId, -0.08, 4500), 7000);
 
-      setTimeout(() => applyModelRotation(vrm, character, modelId, modelRotation1, 4500), 500);
-      setTimeout(() => applyModelRotation(vrm, character, modelId, modelRotation2, 4500), 7000);
-
-      // 60% chance for slight smile during look
       if (Math.random() > 0.4) {
         setTimeout(() => applyIdleExpression(vrm, character, 'happy', 0.45, 1800), 300);
       }
 
       const directions =[
-        { x: 0.12, y: 0.32, duration: 3500 },
-        { x: 0.05, y: 0.08, duration: 2500 },
-        { x: 0.1, y: -0.28, duration: 3500 },
+        { x: 0.12, y: 0.32, duration: 4000 },
+        { x: 0.05, y: 0.08, duration: 3000 },
+        { x: 0.1, y: -0.28, duration: 4000 },
         { x: 0.02, y: -0.06, duration: 3000 }
       ];
 
-            let currentStep = 0;
-            const head = vrm.humanoid?.getNormalizedBoneNode("head");
-            if (!head) return;
-            const baseEuler = new THREE.Euler().setFromQuaternion(head.quaternion.clone());
-
-            function doStep() {
-                if (currentStep >= directions.length ||
-                    current_avatars[character]?.vrm !== vrm ||
-                    current_avatars[character]?.["id"] !== modelId) {
-                    return;
-                }
-
-                const step = directions[currentStep];
-                const startTime = Date.now();
-                const startQuat = head.quaternion.clone();
-                const targetEuler = new THREE.Euler(
-                    baseEuler.x + step.x,
-                    baseEuler.y + step.y,
-                    baseEuler.z
-                );
-                const targetQuat = new THREE.Quaternion().setFromEuler(targetEuler);
-
-                function animateStep() {
-                    if (current_avatars[character]?.vrm !== vrm) return;
-                    const elapsed = Date.now() - startTime;
-                    const progress = Math.min(elapsed / step.duration, 1);
-                    const eased = easeInOutCubic(progress);
-
-                    head.quaternion.slerpQuaternions(startQuat, targetQuat, eased);
-
-                    if (progress < 1) {
-                        requestAnimationFrame(animateStep);
-                    } else {
-                        currentStep++;
-                        if (currentStep < directions.length) {
-                            setTimeout(doStep, 1200);
-                        } else {
-                            const returnStart = Date.now();
-                            const returnDuration = 2500;
-                            const holdQuat = head.quaternion.clone();
-                            const baseQuat = new THREE.Quaternion().setFromEuler(baseEuler);
-
-                            function returnToBase() {
-                                const returnElapsed = Date.now() - returnStart;
-                                const returnProgress = Math.min(returnElapsed / returnDuration, 1);
-                                head.quaternion.slerpQuaternions(holdQuat, baseQuat, easeInOutCubic(returnProgress));
-
-                                if (returnProgress < 1) {
-                                    requestAnimationFrame(returnToBase);
-                                }
-                            }
-                            returnToBase();
-                        }
-                    }
-                }
-
-                animateStep();
-            }
-
-            doStep();
+      let delay = 0;
+      directions.forEach((step) => {
+          setTimeout(() => {
+              applyNaturalMovementWithSlerp(vrm, "head", step, character, modelId, step.duration + 1000);
+          }, delay);
+          delay += step.duration;
+      });
+    }
+  },
+  shoulderShrug: {
+    type: 'body',
+    duration: 6000,
+    description: 'shoulder shrug',
+    action: (vrm, character, modelId) => {
+        const bothShoulders = Math.random() > 0.6;
+        const shrugAmount = Math.random() * 0.12 + 0.06;
+        
+        const config = { x: -shrugAmount, y: 0, z: 0 };
+        
+        applyNaturalMovementWithSlerp(vrm, "leftShoulder", config, character, modelId, 6000);
+        if (bothShoulders) {
+            applyNaturalMovementWithSlerp(vrm, "rightShoulder", config, character, modelId, 6000);
         }
-    },
-    shoulderShrug: {
-        type: 'body',
-        duration: 6000,
-        description: 'shoulder shrug',
-        action: (vrm, character, modelId) => {
-            const bothShoulders = Math.random() > 0.6;
-            const leftShoulder = vrm.humanoid?.getNormalizedBoneNode("leftShoulder");
-            const rightShoulder = vrm.humanoid?.getNormalizedBoneNode("rightShoulder");
-
-            if (!leftShoulder && !rightShoulder) return;
-
-            const shrugAmount = Math.random() * 0.12 + 0.06;
-            const startTime = Date.now();
-            const baseLeft = leftShoulder?.quaternion.clone();
-            const baseRight = rightShoulder?.quaternion.clone();
-
-            const rampDuration = 1500;
-            const holdDuration = 2500;
-            const totalDuration = rampDuration * 2 + holdDuration;
-
-            function animateShrug() {
-                if (current_avatars[character]?.vrm !== vrm ||
-                    current_avatars[character]?.["id"] !== modelId) {
-                    return;
-                }
-
-                const elapsed = Date.now() - startTime;
-
-                if (elapsed >= totalDuration) {
-                    if (leftShoulder && baseLeft) {
-                        leftShoulder.quaternion.slerp(baseLeft, 0.03);
-                    }
-                    if (rightShoulder && baseRight && bothShoulders) {
-                        rightShoulder.quaternion.slerp(baseRight, 0.03);
-                    }
-
-                    const stillMoving = (leftShoulder && baseLeft && leftShoulder.quaternion.angleTo(baseLeft) > 0.001) ||
-                                       (rightShoulder && baseRight && bothShoulders && rightShoulder.quaternion.angleTo(baseRight) > 0.001);
-
-                    if (stillMoving) {
-                        requestAnimationFrame(animateShrug);
-                    }
-                    return;
-                }
-
-                let amplitude = 0;
-                if (elapsed < rampDuration) {
-                    amplitude = easeInOutCubic(elapsed / rampDuration);
-                } else if (elapsed < rampDuration + holdDuration) {
-                    amplitude = 1;
-                } else {
-                    amplitude = 1 - easeInOutCubic((elapsed - rampDuration - holdDuration) / rampDuration);
-                }
-
-                const shrugEuler = new THREE.Euler(-shrugAmount * amplitude, 0, 0);
-                const shrugQuat = new THREE.Quaternion().setFromEuler(shrugEuler);
-
-                if (leftShoulder && baseLeft) {
-                    const targetQuat = baseLeft.clone().multiply(shrugQuat);
-                    leftShoulder.quaternion.slerp(targetQuat, 0.04);
-                }
-                if (rightShoulder && baseRight && bothShoulders) {
-                    const targetQuat = baseRight.clone().multiply(shrugQuat);
-                    rightShoulder.quaternion.slerp(targetQuat, 0.04);
-                }
-
-                requestAnimationFrame(animateShrug);
-            }
-
-            animateShrug();
-        }
-    },
-    armStretch: {
-        type: 'body',
-        duration: 8000,
-        description: 'arm stretch',
-        action: (vrm, character, modelId) => {
-            const side = Math.random() > 0.5 ? "left" : "right";
-            const upperArm = vrm.humanoid?.getNormalizedBoneNode(`${side}UpperArm`);
-            const lowerArm = vrm.humanoid?.getNormalizedBoneNode(`${side}LowerArm`);
-
-            if (!upperArm) return;
-
-            const startTime = Date.now();
-            const baseUpper = upperArm.quaternion.clone();
-            const baseLower = lowerArm?.quaternion.clone();
-
-            const rampDuration = 2000;
-            const holdDuration = 3500;
-            const totalDuration = rampDuration * 2 + holdDuration;
-
-            function animateStretch() {
-                if (current_avatars[character]?.vrm !== vrm ||
-                    current_avatars[character]?.["id"] !== modelId) {
-                    return;
-                }
-
-                const elapsed = Date.now() - startTime;
-
-                if (elapsed >= totalDuration) {
-                    upperArm.quaternion.slerp(baseUpper, 0.03);
-                    if (lowerArm && baseLower) {
-                        lowerArm.quaternion.slerp(baseLower, 0.03);
-                    }
-
-                    const stillMoving = upperArm.quaternion.angleTo(baseUpper) > 0.001 ||
-                                       (lowerArm && baseLower && lowerArm.quaternion.angleTo(baseLower) > 0.001);
-
-                    if (stillMoving) {
-                        requestAnimationFrame(animateStretch);
-                    }
-                    return;
-                }
-
-                let amplitude = 0;
-                if (elapsed < rampDuration) {
-                    amplitude = easeInOutCubic(elapsed / rampDuration);
-                } else if (elapsed < rampDuration + holdDuration) {
-                    amplitude = 1;
-                } else {
-                    amplitude = 1 - easeInOutCubic((elapsed - rampDuration - holdDuration) / rampDuration);
-                }
-
-                const stretchEuler = new THREE.Euler(
-                    -0.2 * amplitude,
-                    0,
-                    (side === "left" ? 0.25 : -0.25) * amplitude
-                );
-                const stretchQuat = new THREE.Quaternion().setFromEuler(stretchEuler);
-                const targetUpper = baseUpper.clone().multiply(stretchQuat);
-
-                upperArm.quaternion.slerp(targetUpper, 0.04);
-
-                if (lowerArm && baseLower) {
-                    const elbowBend = new THREE.Quaternion().setFromEuler(
-                        new THREE.Euler(-0.12 * amplitude, 0, 0)
-                    );
-                    const targetLower = baseLower.clone().multiply(elbowBend);
-                    lowerArm.quaternion.slerp(targetLower, 0.04);
-                }
-
-                requestAnimationFrame(animateStretch);
-            }
-
-            animateStretch();
-        }
-    },
+    }
+  },
+  armStretch: {
+    type: 'body',
+    duration: 8000,
+    description: 'arm stretch',
+    action: (vrm, character, modelId) => {
+        const side = Math.random() > 0.5 ? "left" : "right";
+        
+        const stretchConfig = { x: -0.2, y: 0, z: side === "left" ? 0.25 : -0.25 };
+        applyNaturalMovementWithSlerp(vrm, `${side}UpperArm`, stretchConfig, character, modelId, 8000);
+        
+        const elbowConfig = { x: -0.12, y: 0, z: 0 };
+        applyNaturalMovementWithSlerp(vrm, `${side}LowerArm`, elbowConfig, character, modelId, 8000);
+    }
+  },
   weightShift: {
     type: 'body',
     duration: 10000,
@@ -786,45 +438,21 @@ const NATURAL_MOVEMENTS = {
     action: (vrm, character, modelId) => {
       const direction = Math.random() > 0.5 ? 1 : -1;
 
-      // More pronounced model rotation with weight shift
-      const modelRotation = direction * (Math.random() * 0.1 + 0.08);
-      applyModelRotation(vrm, character, modelId, modelRotation, 9000);
+      applyModelRotation(vrm, character, modelId, direction * (Math.random() * 0.1 + 0.08), 9000);
 
-      // Spine: shift + twist - much more visible
-      const spineConfig = {
-        x: Math.random() * 0.06 - 0.03,
-        y: (Math.random() * 0.22 + 0.1) * direction,
-        z: (Math.random() * 0.2 + 0.05) * direction
-      };
+      const spineConfig = { x: Math.random() * 0.06 - 0.03, y: (Math.random() * 0.22 + 0.1) * direction, z: (Math.random() * 0.2 + 0.05) * direction };
       applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId, 10000);
 
-      // Upper chest follows for more natural movement
-      const upperChest = vrm.humanoid?.getNormalizedBoneNode("upperChest");
-      if (upperChest) {
-        setTimeout(() => {
-          const chestConfig = {
-            x: Math.random() * 0.04 - 0.02,
-            y: (Math.random() * 0.1 + 0.05) * direction,
-            z: (Math.random() * 0.12 + 0.04) * direction
-          };
-          applyNaturalMovementWithSlerp(vrm, "upperChest", chestConfig, character, modelId, 9800);
-        }, 200);
-      }
+      setTimeout(() => {
+        const chestConfig = { x: Math.random() * 0.04 - 0.02, y: (Math.random() * 0.1 + 0.05) * direction, z: (Math.random() * 0.12 + 0.04) * direction };
+        applyNaturalMovementWithSlerp(vrm, "upperChest", chestConfig, character, modelId, 9800);
+      }, 200);
 
-      // Hips: counter-rotation for balance
-      const hips = vrm.humanoid?.getNormalizedBoneNode("hips");
-      if (hips) {
-        setTimeout(() => {
-          const hipsConfig = {
-            x: Math.random() * 0.06 - 0.03,
-            y: -(Math.random() * 0.12 + 0.05) * direction,
-            z: (Math.random() * 0.15 + 0.05) * direction
-          };
-          applyNaturalMovementWithSlerp(vrm, "hips", hipsConfig, character, modelId, 9650);
-        }, 350);
-      }
+      setTimeout(() => {
+        const hipsConfig = { x: Math.random() * 0.06 - 0.03, y: -(Math.random() * 0.12 + 0.05) * direction, z: (Math.random() * 0.15 + 0.05) * direction };
+        applyNaturalMovementWithSlerp(vrm, "hips", hipsConfig, character, modelId, 9650);
+      }, 350);
 
-      // 40% chance for thoughtful expression
       if (Math.random() > 0.6) {
         setTimeout(() => applyIdleExpression(vrm, character, 'neutral', 0.5, 1500), 800);
       }
@@ -839,28 +467,14 @@ const NATURAL_MOVEMENTS = {
       const directionY = Math.random() > 0.5 ? 1 : -1;
       const directionZ = Math.random() > 0.5 ? 1 : -1;
 
-      // Neck tilt - more pronounced stretching motion
-      const neckConfig = {
-        x: (Math.random() * 0.12 + 0.06) * directionX,
-        y: (Math.random() * 0.25 + 0.05) * directionY,
-        z: (Math.random() * 0.4 + 0.15) * directionZ
-      };
+      const neckConfig = { x: (Math.random() * 0.12 + 0.06) * directionX, y: (Math.random() * 0.25 + 0.05) * directionY, z: (Math.random() * 0.4 + 0.15) * directionZ };
       applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 10000);
 
-      // Head follows for natural stretching
-      const head = vrm.humanoid?.getNormalizedBoneNode("head");
-      if (head) {
-        setTimeout(() => {
-          const headConfig = {
-            x: neckConfig.x * 0.7,
-            y: neckConfig.y * 0.6,
-            z: neckConfig.z * 0.8
-          };
-          applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId, 9800);
-        }, 200);
-      }
+      setTimeout(() => {
+        const headConfig = { x: neckConfig.x * 0.7, y: neckConfig.y * 0.6, z: neckConfig.z * 0.8 };
+        applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId, 9800);
+      }, 200);
 
-      // 50% chance for expression during stretch
       if (Math.random() > 0.5) {
         setTimeout(() => applyIdleExpression(vrm, character, 'surprised', 0.55, 2200), 500);
       }
@@ -872,28 +486,14 @@ const NATURAL_MOVEMENTS = {
     description: 'subtle nod',
     action: (vrm, character, modelId) => {
       const direction = Math.random() > 0.5 ? 1 : -1;
-      // More pronounced nod with slight natural variation
-      const headConfig = {
-        x: Math.random() * 0.14 + 0.08,
-        y: (Math.random() * 0.05) * direction,
-        z: (Math.random() * 0.03) * direction
-      };
+      const headConfig = { x: Math.random() * 0.14 + 0.08, y: (Math.random() * 0.05) * direction, z: (Math.random() * 0.03) * direction };
       applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId, 8000);
 
-      // Neck follows naturally
-      const neck = vrm.humanoid?.getNormalizedBoneNode("neck");
-      if (neck) {
-        setTimeout(() => {
-          const neckConfig = {
-            x: headConfig.x * 0.55,
-            y: headConfig.y * 0.6,
-            z: headConfig.z * 0.5
-          };
-          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 7800);
-        }, 200);
-      }
+      setTimeout(() => {
+        const neckConfig = { x: headConfig.x * 0.55, y: headConfig.y * 0.6, z: headConfig.z * 0.5 };
+        applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 7800);
+      }, 200);
 
-      // 70% chance for gentle smile during nod
       if (Math.random() > 0.3) {
         setTimeout(() => applyIdleExpression(vrm, character, 'happy', 0.5, 1500), 1000);
       }
@@ -906,45 +506,21 @@ const NATURAL_MOVEMENTS = {
     action: (vrm, character, modelId) => {
       const direction = Math.random() > 0.5 ? 1 : -1;
 
-      // Model rotation with hip shift - more dynamic
-      const modelRotation = direction * (Math.random() * 0.08 + 0.08);
-      applyModelRotation(vrm, character, modelId, modelRotation, 9500);
+      applyModelRotation(vrm, character, modelId, direction * (Math.random() * 0.08 + 0.08), 9500);
 
-      // Hip tilt + rotation for more dynamic movement
-      const hipConfig = {
-        x: (Math.random() * 0.08 - 0.04),
-        y: (Math.random() * 0.25 + 0.1) * direction,
-        z: (Math.random() * 0.22 + 0.12) * direction
-      };
+      const hipConfig = { x: (Math.random() * 0.08 - 0.04), y: (Math.random() * 0.25 + 0.1) * direction, z: (Math.random() * 0.22 + 0.12) * direction };
       applyNaturalMovementWithSlerp(vrm, "hips", hipConfig, character, modelId, 11000);
 
-      // Upper chest counter-movement for balance
-      const upperChest = vrm.humanoid?.getNormalizedBoneNode("upperChest");
-      if (upperChest) {
-        setTimeout(() => {
-          const chestConfig = {
-            x: (Math.random() * 0.05 - 0.025),
-            y: (Math.random() * 0.08 + 0.04) * direction,
-            z: (Math.random() * 0.08 + 0.04) * direction
-          };
-          applyNaturalMovementWithSlerp(vrm, "upperChest", chestConfig, character, modelId, 10750);
-        }, 250);
-      }
+      setTimeout(() => {
+        const chestConfig = { x: (Math.random() * 0.05 - 0.025), y: (Math.random() * 0.08 + 0.04) * direction, z: (Math.random() * 0.08 + 0.04) * direction };
+        applyNaturalMovementWithSlerp(vrm, "upperChest", chestConfig, character, modelId, 10750);
+      }, 250);
 
-      // Spine counter-movement for balance
-      const spine = vrm.humanoid?.getNormalizedBoneNode("spine");
-      if (spine) {
-        setTimeout(() => {
-          const spineConfig = {
-            x: (Math.random() * 0.08 - 0.04),
-            y: -(Math.random() * 0.15 + 0.08) * direction,
-            z: -(Math.random() * 0.12 + 0.07) * direction
-          };
-          applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId, 10600);
-        }, 400);
-      }
+      setTimeout(() => {
+        const spineConfig = { x: (Math.random() * 0.08 - 0.04), y: -(Math.random() * 0.15 + 0.08) * direction, z: -(Math.random() * 0.12 + 0.07) * direction };
+        applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId, 10600);
+      }, 400);
 
-      // 40% chance for curious expression
       if (Math.random() > 0.6) {
         setTimeout(() => applyIdleExpression(vrm, character, 'surprised', 0.6, 2200), 700);
       }
@@ -958,58 +534,26 @@ const NATURAL_MOVEMENTS = {
       const swayAmount = Math.random() * 0.25 + 0.22;
       const direction = Math.random() > 0.5 ? 1 : -1;
 
-      // Model sways with hips - more pronounced
-      const modelRotation = direction * (Math.random() * 0.08 + 0.06);
-      applyModelRotation(vrm, character, modelId, modelRotation, 12000);
+      applyModelRotation(vrm, character, modelId, direction * (Math.random() * 0.08 + 0.06), 12000);
 
-      // Hip sway with rotation - more dynamic
-      const hipConfig = {
-        x: (Math.random() * 0.08 - 0.04),
-        y: Math.random() * 0.15,
-        z: swayAmount
-      };
+      const hipConfig = { x: (Math.random() * 0.08 - 0.04), y: Math.random() * 0.15, z: swayAmount };
       applyNaturalMovementWithSlerp(vrm, "hips", hipConfig, character, modelId, 14000);
 
-      // Upper chest follows for more graceful movement
-      const upperChest = vrm.humanoid?.getNormalizedBoneNode("upperChest");
-      if (upperChest) {
-        setTimeout(() => {
-          const chestConfig = {
-            x: (Math.random() * 0.06 - 0.03),
-            y: -(Math.random() * 0.12 + 0.05),
-            z: -swayAmount * 0.35
-          };
-          applyNaturalMovementWithSlerp(vrm, "upperChest", chestConfig, character, modelId, 13800);
-        }, 200);
-      }
+      setTimeout(() => {
+        const chestConfig = { x: (Math.random() * 0.06 - 0.03), y: -(Math.random() * 0.12 + 0.05), z: -swayAmount * 0.35 };
+        applyNaturalMovementWithSlerp(vrm, "upperChest", chestConfig, character, modelId, 13800);
+      }, 200);
 
-      // Spine follows with delay
-      const spine = vrm.humanoid?.getNormalizedBoneNode("spine");
-      if (spine) {
-        setTimeout(() => {
-          const spineConfig = {
-            x: (Math.random() * 0.06 - 0.03),
-            y: -(Math.random() * 0.1),
-            z: -swayAmount * 0.52
-          };
-          applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId, 13600);
-        }, 400);
-      }
+      setTimeout(() => {
+        const spineConfig = { x: (Math.random() * 0.06 - 0.03), y: -(Math.random() * 0.1), z: -swayAmount * 0.52 };
+        applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId, 13600);
+      }, 400);
 
-      // Neck slight movement for elegance
-      const neck = vrm.humanoid?.getNormalizedBoneNode("neck");
-      if (neck) {
-        setTimeout(() => {
-          const neckConfig = {
-            x: (Math.random() * 0.04 - 0.02),
-            y: -(Math.random() * 0.08),
-            z: (Math.random() * 0.1 - 0.05)
-          };
-          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 13400);
-        }, 600);
-      }
+      setTimeout(() => {
+        const neckConfig = { x: (Math.random() * 0.04 - 0.02), y: -(Math.random() * 0.08), z: (Math.random() * 0.1 - 0.05) };
+        applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 13400);
+      }, 600);
 
-      // 70% chance for pleasant expression
       if (Math.random() > 0.3) {
         setTimeout(() => applyIdleExpression(vrm, character, 'happy', 0.5, 2200), 1200);
       }
@@ -1021,28 +565,14 @@ const NATURAL_MOVEMENTS = {
     description: 'coy head tilt',
     action: (vrm, character, modelId) => {
       const direction = Math.random() > 0.5 ? 1 : -1;
-      // More pronounced coy tilt with slight angle variation
-      const headConfig = {
-        x: Math.random() * 0.1 + 0.1,
-        y: (Math.random() * 0.12) * direction,
-        z: -(Math.random() * 0.16 + 0.22) * direction
-      };
+      const headConfig = { x: Math.random() * 0.1 + 0.1, y: (Math.random() * 0.12) * direction, z: -(Math.random() * 0.16 + 0.22) * direction };
       applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId, 11000);
 
-      // Neck follows for more natural movement
-      const neck = vrm.humanoid?.getNormalizedBoneNode("neck");
-      if (neck) {
-        setTimeout(() => {
-          const neckConfig = {
-            x: headConfig.x * 0.53,
-            y: headConfig.y * 0.5,
-            z: headConfig.z * 0.58
-          };
-          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 10800);
-        }, 200);
-      }
+      setTimeout(() => {
+        const neckConfig = { x: headConfig.x * 0.53, y: headConfig.y * 0.5, z: headConfig.z * 0.58 };
+        applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 10800);
+      }, 200);
 
-      // 70% chance for shy or cute expression
       const expression = Math.random() > 0.3 ? 'relaxed' : 'shy';
       setTimeout(() => applyIdleExpression(vrm, character, expression, 1.0, 2500), 1200);
     }
@@ -1056,41 +586,19 @@ const NATURAL_MOVEMENTS = {
       if (!upperChest) return;
       const boneName = upperChest.name;
 
-      // Chest actually lifts now - positive X rotation pushes chest forward
-      const chestConfig = {
-        x: Math.random() * 0.1 + 0.18,
-        y: Math.random() * 0.06 - 0.03,
-        z: Math.random() * 0.05 - 0.025
-      };
+      const chestConfig = { x: Math.random() * 0.1 + 0.18, y: Math.random() * 0.06 - 0.03, z: Math.random() * 0.05 - 0.025 };
       applyNaturalMovementWithSlerp(vrm, boneName, chestConfig, character, modelId, 9000);
 
-      // Spine follows naturally
-      const spine = vrm.humanoid?.getNormalizedBoneNode("spine");
-      if (spine) {
-        setTimeout(() => {
-          const spineConfig = {
-            x: chestConfig.x * 0.55,
-            y: chestConfig.y * 0.5,
-            z: chestConfig.z * 0.5
-          };
-          applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId, 8750);
-        }, 250);
-      }
+      setTimeout(() => {
+        const spineConfig = { x: chestConfig.x * 0.55, y: chestConfig.y * 0.5, z: chestConfig.z * 0.5 };
+        applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId, 8750);
+      }, 250);
 
-      // Neck slight adjustment for natural lift
-      const neck = vrm.humanoid?.getNormalizedBoneNode("neck");
-      if (neck) {
-        setTimeout(() => {
-          const neckConfig = {
-            x: -chestConfig.x * 0.35,
-            y: 0,
-            z: 0
-          };
-          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 8600);
-        }, 400);
-      }
+      setTimeout(() => {
+        const neckConfig = { x: -chestConfig.x * 0.35, y: 0, z: 0 };
+        applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 8600);
+      }, 400);
 
-      // 60% chance for confident or proud expression
       if (Math.random() > 0.4) {
         const expression = Math.random() > 0.5 ? 'happy' : 'relaxed';
         setTimeout(() => applyIdleExpression(vrm, character, expression, 1.0, 2000), 1800);
@@ -1144,7 +652,6 @@ let background = undefined;
 // debug
 const gridHelper = new THREE.GridHelper( 20, 20 );
 const axesHelper = new THREE.AxesHelper( 10 );
-
 
 function animate() {
     requestAnimationFrame( animate );
@@ -1239,7 +746,7 @@ function animate() {
                 }
             }
             if (avatar.targetExpressions) {
-                for (const [expr, targetVal] of Object.entries(avatar.targetExpressions)) {
+                for (const[expr, targetVal] of Object.entries(avatar.targetExpressions)) {
                     // Initialize if missing
                     if (avatar.currentExpressions[expr] === undefined) {
                         avatar.currentExpressions[expr] = vrm.expressionManager.getValue(expr) || 0.0;
@@ -1269,12 +776,70 @@ function animate() {
             vrm.update( deltaTime );
             mixer.update( deltaTime );
 
-            // Apply cursor tracking AFTER mixer update so it adds on top of animations
-            // if (cursorTrackingEnabled && extension_settings.vrm.follow_cursor) {
-            //     applyCursorTiltAndShift(vrm, character);
-            // } else {
-            //     resetCursorTilt(vrm, character);
-            // }
+            // --- PROCEDURAL ANIMATIONS (Apply ON TOP of mixer) ---
+            if (avatar.boneTweens && avatar.boneOffsets) {
+                const now = Date.now();
+                for (const [boneName, tween] of Object.entries(avatar.boneTweens)) {
+                    const elapsed = now - tween.startTime;
+                    
+                    if (elapsed >= tween.totalDuration) {
+                        avatar.boneOffsets[boneName].identity();
+                        delete avatar.boneTweens[boneName];
+                        continue;
+                    }
+
+                    if (elapsed < tween.rampDuration) {
+                        const t = easeInOutCubic(elapsed / tween.rampDuration);
+                        avatar.boneOffsets[boneName].slerpQuaternions(tween.startQuat, tween.targetQuat, t);
+                    } else if (elapsed < tween.rampDuration + tween.holdDuration) {
+                        avatar.boneOffsets[boneName].copy(tween.targetQuat);
+                    } else {
+                        const rampDownElapsed = elapsed - tween.rampDuration - tween.holdDuration;
+                        const rampDownDuration = tween.totalDuration - tween.rampDuration - tween.holdDuration;
+                        const t = easeInOutCubic(rampDownElapsed / rampDownDuration);
+                        const identity = new THREE.Quaternion();
+                        avatar.boneOffsets[boneName].slerpQuaternions(tween.targetQuat, identity, t);
+                    }
+                }
+            }
+
+            // Apply the calculated offsets to the bones
+            if (avatar.boneOffsets) {
+                for (const [boneName, offsetQuat] of Object.entries(avatar.boneOffsets)) {
+                    const bone = vrm.humanoid?.getNormalizedBoneNode(boneName);
+                    if (bone) {
+                        bone.quaternion.multiply(offsetQuat);
+                    }
+                }
+            }
+
+            // Model Rotation Procedural Offset
+            if (avatar.modelRotationTween !== undefined) {
+                const tween = avatar.modelRotationTween;
+                const now = Date.now();
+                const elapsed = now - tween.startTime;
+
+                if (elapsed >= tween.totalDuration) {
+                    avatar.modelRotationOffset = 0;
+                    delete avatar.modelRotationTween;
+                } else {
+                    if (elapsed < tween.rampDuration) {
+                        const t = easeInOutCubic(elapsed / tween.rampDuration);
+                        avatar.modelRotationOffset = tween.startYaw + (tween.targetYaw - tween.startYaw) * t;
+                    } else if (elapsed < tween.rampDuration + tween.holdDuration) {
+                        avatar.modelRotationOffset = tween.targetYaw;
+                    } else {
+                        const rampDownElapsed = elapsed - tween.rampDuration - tween.holdDuration;
+                        const rampDownDuration = tween.totalDuration - tween.rampDuration - tween.holdDuration;
+                        const t = easeInOutCubic(rampDownElapsed / rampDownDuration);
+                        avatar.modelRotationOffset = tween.targetYaw * (1 - t);
+                    }
+                }
+                
+                const model_path = avatar.model_path;
+                const baseRy = Number(extension_settings.vrm.model_settings[model_path]?.['ry'] || 0);
+                avatar.objectContainer.rotation.y = baseRy + avatar.modelRotationOffset;
+            }
         }
         
         gridHelper.visible = extension_settings.vrm.show_grid;
