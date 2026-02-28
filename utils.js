@@ -449,8 +449,8 @@ Reply EXACTLY with this format and nothing else:
 If nothing fits perfectly, use [expression:neutral] [animation:neutral].`;
 
     let userPrompt = `Current Sentence: "${sentence}"`;
-    if (textBefore) userPrompt = `Context Before: "${textBefore}"\n` + userPrompt;
-    if (textAfter) userPrompt += `\nContext After: "${textAfter}"`;
+    if (textBefore) userPrompt = `Context Before: ${textBefore}\n` + userPrompt;
+    if (textAfter) userPrompt += `\nContext After: ${textAfter}`;
 
     try {
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
