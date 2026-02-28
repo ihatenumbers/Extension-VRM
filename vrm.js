@@ -102,7 +102,7 @@ window.addEventListener('mousemove', (event) => {
     }
 }, { passive: true });
 
-function applyNaturalMovementWithSlerp(vrm, boneName, movementConfig, character, modelId) {
+function applyNaturalMovementWithSlerp(vrm, boneName, movementConfig, character, modelId, duration = 12000) {
     const bone = vrm.humanoid?.getNormalizedBoneNode(boneName);
     if (!bone) return;
 
@@ -116,9 +116,9 @@ function applyNaturalMovementWithSlerp(vrm, boneName, movementConfig, character,
     );
     const targetQuat = new THREE.Quaternion().setFromEuler(targetEuler);
 
-    const rampDuration = 3500;
-    const holdDuration = 5000;
-    const totalDuration = rampDuration * 2 + holdDuration;
+    const rampDuration = duration * 0.3;
+    const holdDuration = duration * 0.4;
+    const totalDuration = duration;
 
     function updateMovement() {
         if (current_avatars[character]?.vrm !== vrm ||
@@ -135,7 +135,9 @@ function applyNaturalMovementWithSlerp(vrm, boneName, movementConfig, character,
                 requestAnimationFrame(updateMovement);
             } else {
                 bone.quaternion.copy(baseQuat);
-                delete activeNaturalMovements[character];
+                if (activeNaturalMovements[character] === updateMovement) {
+                    delete activeNaturalMovements[character];
+                }
             }
             return;
         }
@@ -148,7 +150,7 @@ function applyNaturalMovementWithSlerp(vrm, boneName, movementConfig, character,
             bone.quaternion.copy(targetQuat);
         } else {
             const rampDownElapsed = elapsed - rampDuration - holdDuration;
-            t = easeInOutCubic(rampDownElapsed / rampDuration);
+            t = easeInOutCubic(rampDownElapsed / (totalDuration - rampDuration - holdDuration));
             bone.quaternion.slerpQuaternions(targetQuat, baseQuat, t);
         }
 
@@ -421,7 +423,7 @@ const NATURAL_MOVEMENTS = {
         y: angleY,
         z: angleZ
       };
-      applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId);
+      applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId, 12000);
 
       // Neck follows with natural follow-through
       const neck = vrm.humanoid?.getNormalizedBoneNode("neck");
@@ -432,7 +434,7 @@ const NATURAL_MOVEMENTS = {
             y: angleY * 0.42,
             z: angleZ * 0.6
           };
-          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId);
+          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 11800);
         }, 200);
       }
 
@@ -458,7 +460,7 @@ const NATURAL_MOVEMENTS = {
         y: angleY,
         z: angleZ
       };
-      applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId);
+      applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId, 12000);
 
       // Add neck follow with more natural movement
       const neck = vrm.humanoid?.getNormalizedBoneNode("neck");
@@ -469,7 +471,7 @@ const NATURAL_MOVEMENTS = {
             y: angleY * 0.35,
             z: angleZ * 0.57
           };
-          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId);
+          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 11800);
         }, 200);
       }
 
@@ -515,7 +517,7 @@ const NATURAL_MOVEMENTS = {
         y: angleY,
         z: angleZ
       };
-      applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId);
+      applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId, 10000);
 
       // Neck follows naturally
       const neck = vrm.humanoid?.getNormalizedBoneNode("neck");
@@ -526,7 +528,7 @@ const NATURAL_MOVEMENTS = {
             y: angleY * 0.54,
             z: angleZ * 0.5
           };
-          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId);
+          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 9700);
         }, 300);
       }
 
@@ -539,14 +541,14 @@ const NATURAL_MOVEMENTS = {
             y: angleY * 0.43,
             z: angleZ * 0.38
           };
-          applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId);
+          applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId, 9500);
         }, 500);
       }
     }
   },
   lookAround: {
     type: 'head',
-    duration: 16000,
+    duration: 19000,
     description: 'looking around',
     action: (vrm, character, modelId) => {
       // Model rotation that follows to look pattern - more dynamic
@@ -561,7 +563,7 @@ const NATURAL_MOVEMENTS = {
         setTimeout(() => applyIdleExpression(vrm, character, 'happy', 0.45, 1800), 300);
       }
 
-      const directions = [
+      const directions =[
         { x: 0.12, y: 0.32, duration: 3500 },
         { x: 0.05, y: 0.08, duration: 2500 },
         { x: 0.1, y: -0.28, duration: 3500 },
@@ -646,8 +648,8 @@ const NATURAL_MOVEMENTS = {
             const baseLeft = leftShoulder?.quaternion.clone();
             const baseRight = rightShoulder?.quaternion.clone();
 
-            const rampDuration = 2500;
-            const holdDuration = 4000;
+            const rampDuration = 1500;
+            const holdDuration = 2500;
             const totalDuration = rampDuration * 2 + holdDuration;
 
             function animateShrug() {
@@ -717,8 +719,8 @@ const NATURAL_MOVEMENTS = {
             const baseUpper = upperArm.quaternion.clone();
             const baseLower = lowerArm?.quaternion.clone();
 
-            const rampDuration = 3000;
-            const holdDuration = 5000;
+            const rampDuration = 2000;
+            const holdDuration = 3500;
             const totalDuration = rampDuration * 2 + holdDuration;
 
             function animateStretch() {
@@ -794,7 +796,7 @@ const NATURAL_MOVEMENTS = {
         y: (Math.random() * 0.22 + 0.1) * direction,
         z: (Math.random() * 0.2 + 0.05) * direction
       };
-      applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId);
+      applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId, 10000);
 
       // Upper chest follows for more natural movement
       const upperChest = vrm.humanoid?.getNormalizedBoneNode("upperChest");
@@ -805,7 +807,7 @@ const NATURAL_MOVEMENTS = {
             y: (Math.random() * 0.1 + 0.05) * direction,
             z: (Math.random() * 0.12 + 0.04) * direction
           };
-          applyNaturalMovementWithSlerp(vrm, "upperChest", chestConfig, character, modelId);
+          applyNaturalMovementWithSlerp(vrm, "upperChest", chestConfig, character, modelId, 9800);
         }, 200);
       }
 
@@ -818,7 +820,7 @@ const NATURAL_MOVEMENTS = {
             y: -(Math.random() * 0.12 + 0.05) * direction,
             z: (Math.random() * 0.15 + 0.05) * direction
           };
-          applyNaturalMovementWithSlerp(vrm, "hips", hipsConfig, character, modelId);
+          applyNaturalMovementWithSlerp(vrm, "hips", hipsConfig, character, modelId, 9650);
         }, 350);
       }
 
@@ -843,7 +845,7 @@ const NATURAL_MOVEMENTS = {
         y: (Math.random() * 0.25 + 0.05) * directionY,
         z: (Math.random() * 0.4 + 0.15) * directionZ
       };
-      applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId);
+      applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 10000);
 
       // Head follows for natural stretching
       const head = vrm.humanoid?.getNormalizedBoneNode("head");
@@ -854,7 +856,7 @@ const NATURAL_MOVEMENTS = {
             y: neckConfig.y * 0.6,
             z: neckConfig.z * 0.8
           };
-          applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId);
+          applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId, 9800);
         }, 200);
       }
 
@@ -876,7 +878,7 @@ const NATURAL_MOVEMENTS = {
         y: (Math.random() * 0.05) * direction,
         z: (Math.random() * 0.03) * direction
       };
-      applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId);
+      applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId, 8000);
 
       // Neck follows naturally
       const neck = vrm.humanoid?.getNormalizedBoneNode("neck");
@@ -887,7 +889,7 @@ const NATURAL_MOVEMENTS = {
             y: headConfig.y * 0.6,
             z: headConfig.z * 0.5
           };
-          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId);
+          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 7800);
         }, 200);
       }
 
@@ -914,7 +916,7 @@ const NATURAL_MOVEMENTS = {
         y: (Math.random() * 0.25 + 0.1) * direction,
         z: (Math.random() * 0.22 + 0.12) * direction
       };
-      applyNaturalMovementWithSlerp(vrm, "hips", hipConfig, character, modelId);
+      applyNaturalMovementWithSlerp(vrm, "hips", hipConfig, character, modelId, 11000);
 
       // Upper chest counter-movement for balance
       const upperChest = vrm.humanoid?.getNormalizedBoneNode("upperChest");
@@ -925,7 +927,7 @@ const NATURAL_MOVEMENTS = {
             y: (Math.random() * 0.08 + 0.04) * direction,
             z: (Math.random() * 0.08 + 0.04) * direction
           };
-          applyNaturalMovementWithSlerp(vrm, "upperChest", chestConfig, character, modelId);
+          applyNaturalMovementWithSlerp(vrm, "upperChest", chestConfig, character, modelId, 10750);
         }, 250);
       }
 
@@ -938,7 +940,7 @@ const NATURAL_MOVEMENTS = {
             y: -(Math.random() * 0.15 + 0.08) * direction,
             z: -(Math.random() * 0.12 + 0.07) * direction
           };
-          applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId);
+          applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId, 10600);
         }, 400);
       }
 
@@ -966,7 +968,7 @@ const NATURAL_MOVEMENTS = {
         y: Math.random() * 0.15,
         z: swayAmount
       };
-      applyNaturalMovementWithSlerp(vrm, "hips", hipConfig, character, modelId);
+      applyNaturalMovementWithSlerp(vrm, "hips", hipConfig, character, modelId, 14000);
 
       // Upper chest follows for more graceful movement
       const upperChest = vrm.humanoid?.getNormalizedBoneNode("upperChest");
@@ -977,7 +979,7 @@ const NATURAL_MOVEMENTS = {
             y: -(Math.random() * 0.12 + 0.05),
             z: -swayAmount * 0.35
           };
-          applyNaturalMovementWithSlerp(vrm, "upperChest", chestConfig, character, modelId);
+          applyNaturalMovementWithSlerp(vrm, "upperChest", chestConfig, character, modelId, 13800);
         }, 200);
       }
 
@@ -990,7 +992,7 @@ const NATURAL_MOVEMENTS = {
             y: -(Math.random() * 0.1),
             z: -swayAmount * 0.52
           };
-          applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId);
+          applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId, 13600);
         }, 400);
       }
 
@@ -1003,7 +1005,7 @@ const NATURAL_MOVEMENTS = {
             y: -(Math.random() * 0.08),
             z: (Math.random() * 0.1 - 0.05)
           };
-          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId);
+          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 13400);
         }, 600);
       }
 
@@ -1025,7 +1027,7 @@ const NATURAL_MOVEMENTS = {
         y: (Math.random() * 0.12) * direction,
         z: -(Math.random() * 0.16 + 0.22) * direction
       };
-      applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId);
+      applyNaturalMovementWithSlerp(vrm, "head", headConfig, character, modelId, 11000);
 
       // Neck follows for more natural movement
       const neck = vrm.humanoid?.getNormalizedBoneNode("neck");
@@ -1036,7 +1038,7 @@ const NATURAL_MOVEMENTS = {
             y: headConfig.y * 0.5,
             z: headConfig.z * 0.58
           };
-          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId);
+          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 10800);
         }, 200);
       }
 
@@ -1060,7 +1062,7 @@ const NATURAL_MOVEMENTS = {
         y: Math.random() * 0.06 - 0.03,
         z: Math.random() * 0.05 - 0.025
       };
-      applyNaturalMovementWithSlerp(vrm, boneName, chestConfig, character, modelId);
+      applyNaturalMovementWithSlerp(vrm, boneName, chestConfig, character, modelId, 9000);
 
       // Spine follows naturally
       const spine = vrm.humanoid?.getNormalizedBoneNode("spine");
@@ -1071,7 +1073,7 @@ const NATURAL_MOVEMENTS = {
             y: chestConfig.y * 0.5,
             z: chestConfig.z * 0.5
           };
-          applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId);
+          applyNaturalMovementWithSlerp(vrm, "spine", spineConfig, character, modelId, 8750);
         }, 250);
       }
 
@@ -1084,7 +1086,7 @@ const NATURAL_MOVEMENTS = {
             y: 0,
             z: 0
           };
-          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId);
+          applyNaturalMovementWithSlerp(vrm, "neck", neckConfig, character, modelId, 8600);
         }, 400);
       }
 
