@@ -266,15 +266,19 @@ function loadSettings() {
             updateExpression(chat_id); // Still update face expression based on main text
             processAndQueueTTS(message.name, message.mes);
         } else {
-            // Original behavior
             updateExpression(chat_id);
             talk(chat_id);
         }
     });
 
     eventSource.on(event_types.MESSAGE_EDITED, async (chat_id) => {
-        updateExpression(chat_id);
-        talk(chat_id);
+        if (extension_settings.vrm.inworld_tts_enabled && !message.is_user && !message.is_system) {
+            updateExpression(chat_id);
+            processAndQueueTTS(message.name, message.mes);
+        } else {
+            updateExpression(chat_id);
+            talk(chat_id);
+        }
     });
 
     updateCharactersListOnce();
