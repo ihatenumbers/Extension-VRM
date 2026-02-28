@@ -124,7 +124,10 @@ import {
 } from "./ui.js";
 import "./controls.js";
 
-import { currentChatMembers } from "./utils.js";
+import {
+    currentChatMembers,
+    fetchAutonomousState
+} from "./utils.js";
 
 const UPDATE_INTERVAL = 100;
 const extensionFolderPath = `scripts/extensions/third-party/Extension-VRM`;
