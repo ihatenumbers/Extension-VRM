@@ -178,8 +178,17 @@ function animate() {
                     
                     // Only update if there is a difference to save performance
                     if (Math.abs(currentVal - targetVal) > 0.001) {
+                        // Blinking needs to be much faster than standard expression changes
+                        const speed = (expr === 'blink') ? 25.0 : 4.0;
+                        
                         // Lerp formula: current += (target - current) * speed * deltaTime
-                        currentVal += (targetVal - currentVal) * deltaTime * 4.0; 
+                        currentVal += (targetVal - currentVal) * deltaTime * speed; 
+                        
+                        // Snap to target if very close to prevent micro-jitter
+                        if (Math.abs(currentVal - targetVal) < 0.01) {
+                            currentVal = targetVal;
+                        }
+
                         avatar.currentExpressions[expr] = currentVal;
                         vrm.expressionManager.setValue(expr, currentVal);
                     }
@@ -833,27 +842,27 @@ async function updateExpression(chat_id, skipMotion = false) {
 
 // Blink
 function blink(character, modelId) {
-    //console.debug(DEBUG_PREFIX,"Blink call:",character,modelId)
     if (current_avatars[character] === undefined || current_avatars[character]["id"] != modelId) {
-        console.debug(DEBUG_PREFIX,"Stopping blink model is no more loaded:",character,modelId)
         return;
     }
 
-    const vrm = current_avatars[character]["vrm"];
+    const avatar = current_avatars[character];
 
-    // Hold eyes closed
-    var blinktimeout = Math.floor(Math.random() * 250) + 50;
+    // Close eyes smoothly by setting the target expression
+    avatar.targetExpressions["blink"] = 1.0;
+
+    // Hold eyes closed for a brief moment, then open smoothly
+    var blinktimeout = Math.floor(Math.random() * 150) + 50; // 50-200ms
     setTimeout(() => {
-            vrm.expressionManager.setValue("blink",0);
+        if (current_avatars[character] && current_avatars[character]["id"] == modelId) {
+            avatar.targetExpressions["blink"] = 0.0;
+        }
     }, blinktimeout);
-    
-    // Open eyes
-    vrm.expressionManager.setValue("blink",1.0);
 
-    // Keep eyes open
-    var rand = Math.round(Math.random() * 10000) + 1000;
+    // Keep eyes open for a random duration before the next blink
+    var rand = Math.round(Math.random() * 6000) + 2000; // 2 to 8 seconds
     setTimeout(function () {
-            blink(character,modelId);
+        blink(character, modelId);
     }, rand);
 }
 
