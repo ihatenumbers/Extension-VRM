@@ -233,7 +233,7 @@ function loadSettings() {
     $('#vrm_model_rotation_y').on('input', onModelRotationChange);
 
     $('#vrm_inworld_tts_enabled_checkbox').on('click', () => {
-        extension_settings.vrm.inworld_tts_enabled = $('#vrm_inworld_tts_enabled_checkbox').is(':checked');
+        const isEnabled = $('#vrm_inworld_tts_enabled_checkbox').is(':checked');
         extension_settings.vrm.inworld_tts_enabled = isEnabled;
 
         // Force disable ST's native TTS to prevent double-audio overlap
