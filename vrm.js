@@ -1223,9 +1223,7 @@ async function playNextInQueue(character) {
         if (!avatar.isPlayingTts) {
             const model_path = extension_settings.vrm.character_model_mapping[character];
             if (model_path) {
-                const defaultExp = extension_settings.vrm.model_settings[model_path]['animation_default']['expression'];
                 const defaultMot = extension_settings.vrm.model_settings[model_path]['animation_default']['motion'];
-                if (avatar.expression !== defaultExp) setExpression(character, defaultExp);
                 if (avatar.motion.name !== defaultMot) setMotion(character, defaultMot, true, false, false);
             }
         }
