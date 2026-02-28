@@ -58,7 +58,8 @@ export {
     onModelRotationChange,
     onAnimationMappingChange,
     models_files,
-    animations_files
+    animations_files,
+    animations_groups
 };
 
 let characters_list = [];
