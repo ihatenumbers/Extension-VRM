@@ -105,11 +105,68 @@ function animate() {
             const vrm = avatar["vrm"];
             const mixer = avatar["animation_mixer"];
             
-            if (extension_settings.vrm.follow_camera)
-                vrm.lookAt.target = lookAtTarget;
-            else
-                vrm.lookAt.target = null;
+            if (avatar.eyeTimer === undefined) {
+                avatar.eyeTimer = 0;
+                avatar.eyeTargetOffset = new THREE.Vector3(0, 0, 0);
+                avatar.eyeCurrentOffset = new THREE.Vector3(0, 0, 0);
+                avatar.personalLookAtTarget = new THREE.Object3D();
+                scene.add(avatar.personalLookAtTarget);
+            }
 
+            avatar.eyeTimer -= deltaTime;
+            if (avatar.eyeTimer <= 0) {
+                // Random interval between eye darts (0.5s to 3.5s)
+                avatar.eyeTimer = 0.5 + Math.random() * 3.0;
+
+                // 30% chance to look directly at the center (rest)
+                if (Math.random() < 0.3) {
+                    avatar.eyeTargetOffset.set(0, 0, 0);
+                } else {
+                    // Dart eyes around. Multipliers control the range of movement.
+                    avatar.eyeTargetOffset.set(
+                        (Math.random() - 0.5) * 1.5, // Left/Right
+                        (Math.random() - 0.5) * 1.0, // Up/Down
+                        0
+                    );
+                }
+            }
+
+            // Saccades are fast eye movements. High lerp factor = snappy movement.
+            avatar.eyeCurrentOffset.lerp(avatar.eyeTargetOffset, deltaTime * 15.0);
+
+            if (extension_settings.vrm.follow_camera) {
+                // Start at the camera's position
+                camera.getWorldPosition(avatar.personalLookAtTarget.position);
+                
+                // Transform offset so it's relative to the camera view
+                const cameraOffset = avatar.eyeCurrentOffset.clone();
+                cameraOffset.applyQuaternion(camera.quaternion);
+                
+                avatar.personalLookAtTarget.position.add(cameraOffset);
+                vrm.lookAt.target = avatar.personalLookAtTarget;
+            } else {
+                // Look straight ahead of the model + the offset
+                const head = vrm.humanoid.getNormalizedBoneNode('head');
+                if (head) {
+                    head.getWorldPosition(avatar.personalLookAtTarget.position);
+                    
+                    // Default "forward" is +Z (towards the camera)
+                    const forward = new THREE.Vector3(0, 0, 1);
+                    forward.applyQuaternion(avatar.objectContainer.quaternion);
+                    
+                    // Place target 5 units in front
+                    avatar.personalLookAtTarget.position.add(forward.multiplyScalar(5.0));
+                    
+                    // Apply offset relative to the character's facing direction
+                    const localOffset = avatar.eyeCurrentOffset.clone();
+                    localOffset.applyQuaternion(avatar.objectContainer.quaternion);
+                    
+                    avatar.personalLookAtTarget.position.add(localOffset);
+                    vrm.lookAt.target = avatar.personalLookAtTarget;
+                } else {
+                    vrm.lookAt.target = null;
+                }
+            }
             if (avatar.targetExpressions) {
                 for (const [expr, targetVal] of Object.entries(avatar.targetExpressions)) {
                     // Initialize if missing
@@ -290,6 +347,11 @@ async function unloadModel(character) {
         for(const hitbox in current_avatars[character]["hitboxes"]) {
             console.debug(DEBUG_PREFIX,"REMOVING",current_avatars[character]["hitboxes"][hitbox]["offsetContainer"])
             scene.remove(scene.getObjectByName(current_avatars[character]["hitboxes"][hitbox]["offsetContainer"].name));
+        }
+
+        // Remove personal look at target to prevent memory leaks
+        if (current_avatars[character].personalLookAtTarget) {
+            scene.remove(current_avatars[character].personalLookAtTarget);
         }
 
         // unload animations
