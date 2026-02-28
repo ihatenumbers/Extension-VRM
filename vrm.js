@@ -625,8 +625,13 @@ function triggerRandomNaturalMovement(character, modelId) {
         defaultMotionGroup = defaultMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
     }
 
+    // Determine if character is truly idle (default animation, not talking, nothing queued)
+    const isDefaultMotion = (currentMotionGroup === defaultMotionGroup || avatar.motion.name === "none");
+    const isNotTalking = !avatar.isPlayingTts && (avatar.talkEnd || 0) <= Date.now();
+    const hasNoQueuedMotions = !(avatar.motionQueue && avatar.motionQueue.length > 0);
+
     // Only trigger if in idle state
-    if (currentMotionGroup === defaultMotionGroup || avatar.motion.name === "none") {
+    if (isDefaultMotion && isNotTalking && hasNoQueuedMotions) {
         const movementKeys = Object.keys(NATURAL_MOVEMENTS);
         const randomKey = movementKeys[Math.floor(Math.random() * movementKeys.length)];
         const movement = NATURAL_MOVEMENTS[randomKey];
@@ -639,10 +644,10 @@ function triggerRandomNaturalMovement(character, modelId) {
             triggerRandomNaturalMovement(character, modelId);
         }, nextDelay);
     } else {
-        // Check again later if a specific animation is playing
+        // Check again later if a specific animation or TTS is currently playing
         avatar.naturalMovementTimer = setTimeout(() => {
             triggerRandomNaturalMovement(character, modelId);
-        }, 5000);
+        }, 3000); // Check again in 3 seconds
     }
 }
 
@@ -673,96 +678,67 @@ function animate() {
 
             avatar.eyeTimer -= deltaTime;
             if (avatar.eyeTimer <= 0) {
-                // Random interval between eye darts (0.5s to 3.5s)
                 avatar.eyeTimer = 0.5 + Math.random() * 3.0;
-
-                // 30% chance to look directly at the center (rest)
                 if (Math.random() < 0.3) {
                     avatar.eyeTargetOffset.set(0, 0, 0);
                 } else {
-                    // Dart eyes around. Multipliers control the range of movement.
-                    avatar.eyeTargetOffset.set(
-                        (Math.random() - 0.5) * 1.5, // Left/Right
-                        (Math.random() - 0.5) * 1.0, // Up/Down
-                        0
-                    );
+                    avatar.eyeTargetOffset.set((Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 1.0, 0);
                 }
             }
 
-            // Saccades are fast eye movements. High lerp factor = snappy movement.
             avatar.eyeCurrentOffset.lerp(avatar.eyeTargetOffset, deltaTime * 15.0);
 
             if (extension_settings.vrm.cursor_tracking) {
-                // Initialize reusable vectors once
                 if (!avatar.cursorVec) avatar.cursorVec = new THREE.Vector3();
                 if (!avatar.cursorLerpTarget) avatar.cursorLerpTarget = new THREE.Vector3();
                 if (!avatar.cameraOffsetVec) avatar.cameraOffsetVec = new THREE.Vector3();
                 
-                // Convert mouse coordinates to 3D space
                 avatar.cursorVec.set(cursorPosition.x, cursorPosition.y, 0.5);
                 avatar.cursorVec.unproject(camera);
-                
-                // Target position based on cursor (placed 5 units away)
                 avatar.cursorVec.sub(camera.position).normalize().multiplyScalar(5.0).add(camera.position);
                 
-                // Smoothly lerp towards the cursor position
                 avatar.cursorLerpTarget.lerp(avatar.cursorVec, deltaTime * 5.0);
                 avatar.personalLookAtTarget.position.copy(avatar.cursorLerpTarget);
                 
-                // Add natural eye dart offset
                 avatar.cameraOffsetVec.copy(avatar.eyeCurrentOffset).applyQuaternion(camera.quaternion);
                 avatar.personalLookAtTarget.position.add(avatar.cameraOffsetVec);
                 
                 vrm.lookAt.target = avatar.personalLookAtTarget;
 
             } else if (extension_settings.vrm.follow_camera) {
-                // Start at the camera's position
                 camera.getWorldPosition(avatar.personalLookAtTarget.position);
-                
-                // Transform offset so it's relative to the camera view
                 const cameraOffset = avatar.eyeCurrentOffset.clone();
                 cameraOffset.applyQuaternion(camera.quaternion);
-                
                 avatar.personalLookAtTarget.position.add(cameraOffset);
                 vrm.lookAt.target = avatar.personalLookAtTarget;
             } else {
-                // Look straight ahead of the model + the offset
                 const head = vrm.humanoid.getNormalizedBoneNode('head');
                 if (head) {
                     head.getWorldPosition(avatar.personalLookAtTarget.position);
-                    
                     const forward = new THREE.Vector3(0, 0, 1);
                     forward.applyQuaternion(avatar.objectContainer.quaternion);
-                    
                     avatar.personalLookAtTarget.position.add(forward.multiplyScalar(5.0));
                     
                     const localOffset = avatar.eyeCurrentOffset.clone();
                     localOffset.applyQuaternion(avatar.objectContainer.quaternion);
-                    
                     avatar.personalLookAtTarget.position.add(localOffset);
                     vrm.lookAt.target = avatar.personalLookAtTarget;
                 } else {
                     vrm.lookAt.target = null;
                 }
             }
+
             if (avatar.targetExpressions) {
                 for (const[expr, targetVal] of Object.entries(avatar.targetExpressions)) {
-                    // Initialize if missing
                     if (avatar.currentExpressions[expr] === undefined) {
                         avatar.currentExpressions[expr] = vrm.expressionManager.getValue(expr) || 0.0;
                     }
                     
                     let currentVal = avatar.currentExpressions[expr];
-                    
-                    // Only update if there is a difference to save performance
                     if (Math.abs(currentVal - targetVal) > 0.001) {
-                        // Blinking needs to be much faster than standard expression changes
                         const speed = (expr === 'blink') ? 25.0 : 4.0;
-                        
-                        // Lerp formula: current += (target - current) * speed * deltaTime
                         currentVal += (targetVal - currentVal) * deltaTime * speed; 
                         
-                        // Snap to target if very close to prevent micro-jitter
                         if (Math.abs(currentVal - targetVal) < 0.01) {
                             currentVal = targetVal;
                         }
@@ -776,12 +752,39 @@ function animate() {
             vrm.update( deltaTime );
             mixer.update( deltaTime );
 
+            // Check if avatar is currently busy (talking or doing a non-idle animation)
+            let isBusy = false;
+            const model_path = avatar.model_path;
+            const defaultMotion = extension_settings.vrm.model_settings[model_path]?.['animation_default']?.['motion'];
+            
+            let currentMotionGroup = avatar.motion.name;
+            if (currentMotionGroup && currentMotionGroup !== "none") {
+                currentMotionGroup = currentMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
+            }
+            let defaultMotionGroup = defaultMotion;
+            if (defaultMotionGroup && defaultMotionGroup !== "none") {
+                defaultMotionGroup = defaultMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
+            }
+            
+            if (currentMotionGroup !== defaultMotionGroup || avatar.isPlayingTts || (avatar.talkEnd || 0) > Date.now() || (avatar.motionQueue && avatar.motionQueue.length > 0)) {
+                isBusy = true;
+            }
+
             // --- PROCEDURAL ANIMATIONS (Apply ON TOP of mixer) ---
             if (avatar.boneTweens && avatar.boneOffsets) {
                 const now = Date.now();
                 for (const [boneName, tween] of Object.entries(avatar.boneTweens)) {
                     const elapsed = now - tween.startTime;
                     
+                    // Gracefully interrupt and fade out if avatar becomes busy
+                    if (isBusy && elapsed < tween.rampDuration + tween.holdDuration && !tween.isInterrupting) {
+                        tween.isInterrupting = true;
+                        tween.rampDuration = Math.min(tween.rampDuration, elapsed);
+                        tween.holdDuration = 0;
+                        tween.totalDuration = elapsed + 800; // 0.8 seconds to smoothly fade out
+                        tween.targetQuat = avatar.boneOffsets[boneName].clone(); // Fade from current exact offset
+                    }
+
                     if (elapsed >= tween.totalDuration) {
                         avatar.boneOffsets[boneName].identity();
                         delete avatar.boneTweens[boneName];
@@ -796,7 +799,7 @@ function animate() {
                     } else {
                         const rampDownElapsed = elapsed - tween.rampDuration - tween.holdDuration;
                         const rampDownDuration = tween.totalDuration - tween.rampDuration - tween.holdDuration;
-                        const t = easeInOutCubic(rampDownElapsed / rampDownDuration);
+                        const t = rampDownDuration > 0 ? easeInOutCubic(rampDownElapsed / rampDownDuration) : 1;
                         const identity = new THREE.Quaternion();
                         avatar.boneOffsets[boneName].slerpQuaternions(tween.targetQuat, identity, t);
                     }
@@ -819,6 +822,15 @@ function animate() {
                 const now = Date.now();
                 const elapsed = now - tween.startTime;
 
+                // Gracefully interrupt and fade out if avatar becomes busy
+                if (isBusy && elapsed < tween.rampDuration + tween.holdDuration && !tween.isInterrupting) {
+                    tween.isInterrupting = true;
+                    tween.rampDuration = Math.min(tween.rampDuration, elapsed);
+                    tween.holdDuration = 0;
+                    tween.totalDuration = elapsed + 800;
+                    tween.targetYaw = avatar.modelRotationOffset || 0;
+                }
+
                 if (elapsed >= tween.totalDuration) {
                     avatar.modelRotationOffset = 0;
                     delete avatar.modelRotationTween;
@@ -831,12 +843,11 @@ function animate() {
                     } else {
                         const rampDownElapsed = elapsed - tween.rampDuration - tween.holdDuration;
                         const rampDownDuration = tween.totalDuration - tween.rampDuration - tween.holdDuration;
-                        const t = easeInOutCubic(rampDownElapsed / rampDownDuration);
+                        const t = rampDownDuration > 0 ? easeInOutCubic(rampDownElapsed / rampDownDuration) : 1;
                         avatar.modelRotationOffset = tween.targetYaw * (1 - t);
                     }
                 }
                 
-                const model_path = avatar.model_path;
                 const baseRy = Number(extension_settings.vrm.model_settings[model_path]?.['ry'] || 0);
                 avatar.objectContainer.rotation.y = baseRy + avatar.modelRotationOffset;
             }
