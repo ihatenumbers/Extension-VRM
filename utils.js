@@ -253,7 +253,7 @@ async function getExpressionLabel(text) {
             } break;
         }
     } catch (error) {
-        toastr.info('Could not classify expression. Check the console or your backend for more information.');
+        // toastr.info('Could not classify expression. Check the console or your backend for more information.');
         console.error(error);
         return FALLBACK_EXPRESSION;
     }
