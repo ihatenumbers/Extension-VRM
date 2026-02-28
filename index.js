@@ -88,7 +88,9 @@ import {
     updateModel,
     playTimelineMotions,
     processAndQueueTTS,
-    stopTTS
+    stopTTS,
+    blendExpressions,
+    fetchAutonomousState
 } from "./vrm.js";
 import {
     onEnabledClick,
@@ -150,6 +152,8 @@ const defaultSettings = {
 
     // Groq LLM
     groq_api_key: "",
+    autonomous_agent: false,
+    autonomous_interval: 10,
 
     // Performances
     hitboxes: false,
@@ -195,6 +199,7 @@ function loadSettings() {
     $('#vrm_lock_models_checkbox').prop('checked', extension_settings.vrm.lock_models);
     $('#vrm_inworld_tts_enabled_checkbox').prop('checked', extension_settings.vrm.inworld_tts_enabled);
     $('#vrm_inworld_tts_enabled_checkbox').prop('checked', extension_settings.vrm.inworld_tts_enabled);
+    $('#vrm_autonomous_agent_checkbox').prop('checked', extension_settings.vrm.autonomous_agent);
     $('#vrm_hitboxes_checkbox').prop('checked', extension_settings.vrm.hitboxes);
     $('#vrm_models_cache_checkbox').prop('checked', extension_settings.vrm.models_cache);
     $('#vrm_animations_cache_checkbox').prop('checked', extension_settings.vrm.animations_cache);
@@ -207,10 +212,13 @@ function loadSettings() {
     $('#vrm_inworld_speed').val(extension_settings.vrm.inworld_speed ?? 1.0);
     $('#vrm_inworld_speed_value').text(extension_settings.vrm.inworld_speed ?? 1.0);
     $('#vrm_groq_api_key').val(extension_settings.vrm.groq_api_key);
+    $('#vrm_autonomous_interval').val(extension_settings.vrm.autonomous_interval ?? 10);
+    $('#vrm_autonomous_interval_value').text(extension_settings.vrm.autonomous_interval ?? 10);
     $('#vrm_light_color').val(extension_settings.vrm.light_color);
     $('#vrm_light_intensity').val(extension_settings.vrm.light_intensity);
     $('#vrm_light_intensity_value').text(extension_settings.vrm.light_intensity);
 
+    $('#vrm_autonomous_agent_checkbox').on('click', () => {extension_settings.vrm.autonomous_agent = $('#vrm_autonomous_agent_checkbox').is(':checked'); saveSettingsDebounced(); if (extension_settings.vrm.autonomous_agent) startAutonomousLoop();});
     $('#vrm_enabled_checkbox').on('click', onEnabledClick);
     $('#vrm_follow_camera_checkbox').on('click', onFollowCameraClick);
     $('#vrm_blink_checkbox').on('click', onBlinkClick);
@@ -264,6 +272,12 @@ function loadSettings() {
         }
     });
     $('#vrm_groq_api_key').on('input', () => {extension_settings.vrm.groq_api_key = $('#vrm_groq_api_key').val(); saveSettingsDebounced();});
+    $('#vrm_autonomous_interval').on('input', () => {
+        extension_settings.vrm.autonomous_interval = Number($('#vrm_autonomous_interval').val());
+        $('#vrm_autonomous_interval_value').text(extension_settings.vrm.autonomous_interval);
+        saveSettingsDebounced();
+        if (extension_settings.vrm.autonomous_agent) startAutonomousLoop(); // Restart loop with new time
+    });
     $('#vrm_default_expression_select').on('change', () => {onAnimationMappingChange('animation_default');});
     $('#vrm_default_motion_select').on('change', () => {onAnimationMappingChange('animation_default');});
     $('#vrm_default_expression_replay').on('click', () => {onAnimationMappingChange('animation_default');});
@@ -342,6 +356,67 @@ jQuery(async () => {
 
     getContainer().append(windowHtml);
     loadSettings();
+
+    // --- AUTONOMOUS AGENT STATE TRACKERS ---
+    let isTyping = false;
+    let isGenerating = false;
+    let lastInteractionTime = Date.now();
+    let autonomousTimer = null;
+
+    // Track user typing
+    $('#send_textarea').on('input', () => {
+        lastInteractionTime = Date.now();
+        isTyping = $('#send_textarea').val().length > 0;
+    });
+    
+    // Track generation state so we don't interrupt the AI talking
+    eventSource.on(event_types.STREAM_STARTED, () => { isGenerating = true; });
+    eventSource.on(event_types.STREAM_ENDED, () => { isGenerating = false; lastInteractionTime = Date.now(); });
+    eventSource.on(event_types.MESSAGE_RECEIVED, () => { isGenerating = false; lastInteractionTime = Date.now(); });
+
+    // The Brain Loop
+    window.startAutonomousLoop = function() {
+        if (autonomousTimer) clearInterval(autonomousTimer);
+        
+        autonomousTimer = setInterval(async () => {
+            if (!extension_settings.vrm.autonomous_agent) {
+                clearInterval(autonomousTimer);
+                return;
+            }
+            
+            // Pause agent if the main LLM is currently generating a reply
+            if (isGenerating) return; 
+
+            const characters = currentChatMembers();
+            if (characters.length === 0) return;
+            const character = characters[0]; 
+
+            if (!extension_settings.vrm.character_model_mapping[character]) return;
+
+            const idleTimeSec = Math.floor((Date.now() - lastInteractionTime) / 1000);
+            const chatContext = getContext().chat;
+            const lastMessage = chatContext.length > 0 ? chatContext[chatContext.length - 1].mes : "";
+
+            // Call Groq
+            const state = await fetchAutonomousState(character, isTyping, idleTimeSec, lastMessage);
+            
+            if (state) {
+                console.debug(DEBUG_PREFIX, "Autonomous Agent Output:", state);
+                blendExpressions(character, {
+                    happy: state.happy || 0,
+                    sad: state.sad || 0,
+                    angry: state.angry || 0,
+                    relaxed: state.relaxed || 0,
+                    surprised: state.surprised || 0
+                });
+            }
+        }, (extension_settings.vrm.autonomous_interval || 10) * 1000);
+    };
+
+    // Start it on boot if enabled
+    if (extension_settings.vrm.autonomous_agent) {
+        startAutonomousLoop();
+    }
 
     document.body.addEventListener('click', async (e) => {
         if (extension_settings.vrm.inworld_tts_enabled) {

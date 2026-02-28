@@ -21,7 +21,8 @@ export {
     chunkText,
     extractSentencesWithContext,
     fetchInworldTTS,
-    fetchSmallLLMTag
+    fetchSmallLLMTag,
+    fetchAutonomousState
 };
 
 const delay = ms => new Promise(res => setTimeout(res, ms));
@@ -558,4 +559,52 @@ function sampleClassifyText(text) {
     }
 
     return result.trim();
+}
+
+/**
+ * Fetches continuous micro-expressions from Groq to keep the avatar alive.
+ */
+async function fetchAutonomousState(character, isTyping, idleTimeSec, lastMessage) {
+    const apiKey = extension_settings.vrm.groq_api_key || "";
+    if (!apiKey) return null;
+    const systemPrompt = `You are the subconscious motor-control system for a 3D avatar named ${character}.
+The user is currently: ${isTyping ? "Typing a message to you" : `Idle for ${idleTimeSec} seconds`}.
+The last chat message was: "${lastMessage.slice(-150)}".
+
+Output the avatar's current micro-expression as a JSON object with float weights from 0.0 to 1.0.
+Keep it subtle, alive, and realistic. Mix emotions (e.g., 0.3 relaxed, 0.1 happy).
+If the user is idle, maybe look relaxed, pensive, or slightly bored. If typing, look attentive.
+
+Provide EXACTLY this JSON format and nothing else:
+{
+  "happy": 0.0,
+  "sad": 0.0,
+  "angry": 0.0,
+  "relaxed": 0.0,
+  "surprised": 0.0
+}`;
+
+    try {
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: "llama-3.1-8b-instant",
+                messages:[{ role: "system", content: systemPrompt }],
+                temperature: 0.4,
+                max_tokens: 100,
+                response_format: { type: "json_object" }
+            })
+        });
+
+        if (!response.ok) return null;
+        const data = await response.json();
+        return JSON.parse(data.choices[0].message.content);
+    } catch (error) {
+        console.error(DEBUG_PREFIX, "Autonomous fetch failed:", error);
+        return null;
+    }
 }

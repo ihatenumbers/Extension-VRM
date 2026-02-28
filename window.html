@@ -103,7 +103,23 @@
                             <input id="vrm_groq_api_key" type="password" class="text_pole" placeholder="gsk_..." style="width: 100%; box-sizing: border-box;">
                         </div>
                     </div>
-                    <small>Get a free API key at console.groq.com to auto-tag animations.</small>
+                    <div>
+                        <h4>Autonomous Agent (Idle Behavior)</h4>
+                    </div>
+                    <label class="checkbox_label" for="vrm_autonomous_agent_checkbox">
+                        <input type="checkbox" id="vrm_autonomous_agent_checkbox" name="vrm_autonomous_agent_checkbox">
+                        <small>Enable Autonomous Agent (Requires Groq API Key)</small>
+                    </label>
+                    <div class="vrm-parameter" style="margin-top: 10px;">
+                        <div class="vrm-parameter-title">
+                            <label for="vrm_autonomous_interval">
+                                Polling Interval <br/>(<span id="vrm_autonomous_interval_value">10</span>s)
+                            </label>
+                        </div>
+                        <div class="vrm-slider-div" style="width: 100%;">
+                            <input id="vrm_autonomous_interval" type="range" min="3" max="60" step="1" value="10" style="width: 100%;" />
+                        </div>
+                    </div>
                     <div>
                         <h4>Debug Settings</h4>
                     </div>

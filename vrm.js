@@ -60,7 +60,8 @@ export {
     setBackground,
     playTimelineMotions,
     processAndQueueTTS,
-    stopTTS
+    stopTTS,
+    blendExpressions
 }
 
 const VRM_CONTAINER_NAME = "VRM_CONTAINER";
@@ -104,16 +105,34 @@ function animate() {
             const vrm = avatar["vrm"];
             const mixer = avatar["animation_mixer"];
             
-            // Look at camera
             if (extension_settings.vrm.follow_camera)
                 vrm.lookAt.target = lookAtTarget;
             else
                 vrm.lookAt.target = null;
 
+            if (avatar.targetExpressions) {
+                for (const [expr, targetVal] of Object.entries(avatar.targetExpressions)) {
+                    // Initialize if missing
+                    if (avatar.currentExpressions[expr] === undefined) {
+                        avatar.currentExpressions[expr] = vrm.expressionManager.getValue(expr) || 0.0;
+                    }
+                    
+                    let currentVal = avatar.currentExpressions[expr];
+                    
+                    // Only update if there is a difference to save performance
+                    if (Math.abs(currentVal - targetVal) > 0.001) {
+                        // Lerp formula: current += (target - current) * speed * deltaTime
+                        currentVal += (targetVal - currentVal) * deltaTime * 4.0; 
+                        avatar.currentExpressions[expr] = currentVal;
+                        vrm.expressionManager.setValue(expr, currentVal);
+                    }
+                }
+            }
+
             vrm.update( deltaTime );
             mixer.update( deltaTime );
         }
-        // Show/hide helper grid
+        
         gridHelper.visible = extension_settings.vrm.show_grid;
         axesHelper.visible = extension_settings.vrm.show_grid;
 
@@ -413,6 +432,8 @@ async function loadModel(model_path) { // Only cache the model if character=null
         "ttsQueue":[],
         "isPlayingTts": false,
         "currentTtsAudio": null,
+        "targetExpressions": {},
+        "currentExpressions": {},
     };
 
     // Hit boxes
@@ -523,24 +544,21 @@ async function initModel(model) {
 }
 
 async function setExpression(character, value) {
-    if (current_avatars[character] === undefined) {
-        console.debug(DEBUG_PREFIX,"WARNING requested setExpression of character without vrm loaded:",character,"(loaded",current_avatars,")");
-        return;
-    }
+    if (current_avatars[character] === undefined) return;
 
     const vrm = current_avatars[character]["vrm"];
-    const current_expression = current_avatars[character]["expression"];
-    console.debug(DEBUG_PREFIX,"Switch expression of",character,"from",current_expression,"to",value);
     
-    // If the value is "none", keep the current cached expression instead of defaulting to neutral
-    if (value === "none" || value === undefined) {
-        return; 
+    if (value === "none" || value === undefined) return; 
+
+    // Reset base emotions to 0, EXCEPT mouth shapes (so TTS lip sync doesn't break)
+    for(const expression in vrm.expressionManager.expressionMap) {
+        if (!['aa','ee','ih','oh','ou','blink'].includes(expression)) {
+            current_avatars[character].targetExpressions[expression] = 0.0;
+        }
     }
 
-    for(const expression in vrm.expressionManager.expressionMap)
-        vrm.expressionManager.setValue(expression, 0.0);
-
-    vrm.expressionManager.setValue(value, 1.0);
+    // Set the new target
+    current_avatars[character].targetExpressions[value] = 1.0;
     current_avatars[character]["expression"] = value;
 }
 
@@ -1275,4 +1293,22 @@ async function playNextInQueue(character) {
         avatar.isPlayingTts = false;
         playNextInQueue(character);
     });
+}
+
+function blendExpressions(character, weights) {
+    if (!current_avatars[character]) return;
+    const vrm = current_avatars[character].vrm;
+
+    // Zero out base emotions first
+    const baseEmotions =['happy', 'angry', 'sad', 'relaxed', 'surprised', 'neutral'];
+    for (const expr of baseEmotions) {
+        current_avatars[character].targetExpressions[expr] = 0.0;
+    }
+
+    // Apply the new mixed weights from Groq
+    for (const [expr, val] of Object.entries(weights)) {
+        if (vrm.expressionManager.expressionMap[expr] !== undefined || baseEmotions.includes(expr)) {
+            current_avatars[character].targetExpressions[expr] = val;
+        }
+    }
 }
