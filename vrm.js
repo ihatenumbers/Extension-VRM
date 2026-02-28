@@ -794,13 +794,9 @@ async function textTalk(character, modelId) {
             let mouth_y = 0.0;
             if (talkEnd > Date.now()) {
                 mouth_y = (Math.sin((talkEnd - Date.now())) + 1) / 2;
-                // Neutralize all expression in case setExpression called in parrallele
-                for(const expression in vrm.expressionManager.expressionMap)
-                    vrm.expressionManager.setValue(expression, Math.min(0.25, vrm.expressionManager.getValue(expression)));
                 vrm.expressionManager.setValue("aa",mouth_y);
             }
-            else { // Restaure expression
-                vrm.expressionManager.setValue(current_avatars[character]["expression"],1.0);
+            else {
                 vrm.expressionManager.setValue("aa",0.0);
             }
         }
@@ -978,9 +974,6 @@ async function audioTalk(blob, character) {
         var vowelmin = 12;
         if(lastUpdate < (Date.now() - LIPS_SYNC_DELAY)) {
             if (current_avatars[character] !== undefined) {
-                // Neutralize all expression in case setExpression called in parrallele
-                for(const expression in current_avatars[character]["vrm"].expressionManager.expressionMap)
-                    current_avatars[character]["vrm"].expressionManager.setValue(expression, Math.min(0.25, current_avatars[character]["vrm"].expressionManager.getValue(expression)));
 
                 if (inputvolume > (mouththreshold * 2)) {
                     const new_value = ((average - vowelmin) / voweldamp) * (mouthboost/10);
@@ -1153,9 +1146,6 @@ function attachVolumeLipSync(audio, character) {
         if (Date.now() - lastUpdate > LIPS_SYNC_DELAY) {
             const avatar = current_avatars[character];
             if (avatar && avatar.vrm) {
-                for (const expression in avatar.vrm.expressionManager.expressionMap) {
-                    avatar.vrm.expressionManager.setValue(expression, Math.min(0.25, avatar.vrm.expressionManager.getValue(expression)));
-                }
 
                 if (inputvolume > (mouththreshold * 2)) {
                     const new_value = ((average - vowelmin) / voweldamp) * (mouthboost / 10);
