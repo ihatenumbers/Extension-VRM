@@ -323,11 +323,6 @@ function loadSettings() {
         }
         lastEditedMessage = { id: chat_id, text: message.mes, time: now };
 
-<<<<<<< HEAD
-=======
-        console.debug(DEBUG_PREFIX, "Message edited/swiped:", chat_id);
-
->>>>>>> 5b23d2fec8cda3a23007495765c442daf824d6ea
         if (extension_settings.vrm.inworld_tts_enabled && !message.is_user && !message.is_system) {
             await updateExpression(chat_id, true);
             processAndQueueTTS(message.name, message.mes, true);
@@ -338,16 +333,9 @@ function loadSettings() {
     };
 
     // Bind to all three update events to ensure compatibility with all SillyTavern versions
-<<<<<<< HEAD
     eventSource.on(event_types.MESSAGE_RECEIVED, onMessageEdit);
     eventSource.on(event_types.MESSAGE_EDITED, onMessageEdit);
     eventSource.on(event_types.MESSAGE_SWIPED, onMessageEdit);
-=======
-    eventSource.on(event_types.MESSAGE_EDITED, onMessageEdit);
-    eventSource.on(event_types.MESSAGE_UPDATED, onMessageEdit);
-    eventSource.on(event_types.MESSAGE_SWIPED, onMessageEdit);
-    eventSource.on(event_types.MESSAGE_RECEIVED, onMessageEdit);
->>>>>>> 5b23d2fec8cda3a23007495765c442daf824d6ea
 
     updateCharactersListOnce();
     updateCharactersModels();
