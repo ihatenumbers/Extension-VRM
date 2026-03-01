@@ -22,7 +22,6 @@ import {
 
 import {
     currentChatMembers,
-    getExpressionLabel,
     extractDialogue,
     chunkText,
     extractSentencesWithContext,
@@ -1492,20 +1491,8 @@ async function updateExpression(chat_id, skipMotion = false) {
             console.debug(DEBUG_PREFIX, 'Playing timeline animations:', timelineMotions);
             playTimelineMotions(character, timelineMotions);
         }
-        
-        const expression = await getExpressionLabel(message.mes);
-        let model_expression = extension_settings.vrm.model_settings[model_path]['classify_mapping'][expression]?.['expression'] || 'none';
-        if (model_expression == 'none') {
-            model_expression = extension_settings.vrm.model_settings[model_path]['animation_default']['expression'];
-        }
-        await setExpression(character, model_expression);
-
         return; 
     }
-
-    const expression = await getExpressionLabel(message.mes);
-    let model_expression = extension_settings.vrm.model_settings[model_path]['classify_mapping'][expression]['expression'];
-    let model_motion = extension_settings.vrm.model_settings[model_path]['classify_mapping'][expression]['motion'];
 
     if (model_expression == 'none') {
         model_expression = extension_settings.vrm.model_settings[model_path]['animation_default']['expression'];

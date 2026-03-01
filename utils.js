@@ -16,7 +16,6 @@ export {
     delay,
     currentChatMembers,
     loadAnimationUi,
-    getExpressionLabel,
     extractDialogue,
     chunkText,
     extractSentencesWithContext,
@@ -193,70 +192,6 @@ function onTextGenSettingsReady(args) {
                 ],
             },
         });
-    }
-}
-
-async function getExpressionLabel(text) {
-    
-    // Return if text is undefined, saving a costly fetch request
-    //if ((!modules.includes('classify') && !extension_settings.expressions.local) || !text) {
-    if ((!modules.includes('classify') && extension_settings.expressions.api == EXPRESSION_API.extras) || !text) {
-        return FALLBACK_EXPRESSION;
-    }
-
-    if (extension_settings.expressions.translate && typeof window['translate'] === 'function') {
-        text = await window['translate'](text, 'en');
-    }
-
-    text = sampleClassifyText(text);
-
-    try {
-        switch (extension_settings.expressions.api) {
-            // Local BERT pipeline
-            case EXPRESSION_API.local: {
-                const localResult = await fetch('/api/extra/classify', {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                    body: JSON.stringify({ text: text }),
-                });
-
-                if (localResult.ok) {
-                    const data = await localResult.json();
-                    return data.classification[0].label;
-                }
-            } break;
-            // Using LLM
-            case EXPRESSION_API.llm: {
-                const expressionsList = await getExpressionsList();
-                const prompt = await getLlmPrompt(expressionsList);
-                eventSource.once(event_types.TEXT_COMPLETION_SETTINGS_READY, onTextGenSettingsReady);
-                const emotionResponse = await generateQuietPrompt(prompt, false, false);
-                return parseLlmResponse(emotionResponse, expressionsList);
-            }
-            // Extras
-            default: {
-                const url = new URL(getApiUrl());
-                url.pathname = '/api/classify';
-
-                const extrasResult = await doExtrasFetch(url, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Bypass-Tunnel-Reminder': 'bypass',
-                    },
-                    body: JSON.stringify({ text: text }),
-                });
-
-                if (extrasResult.ok) {
-                    const data = await extrasResult.json();
-                    return data.classification[0].label;
-                }
-            } break;
-        }
-    } catch (error) {
-        // toastr.info('Could not classify expression. Check the console or your backend for more information.');
-        console.error(error);
-        return FALLBACK_EXPRESSION;
     }
 }
 
