@@ -60,7 +60,8 @@ export {
     playTimelineMotions,
     processAndQueueTTS,
     stopTTS,
-    blendExpressions
+    blendExpressions,
+    processStandaloneGroq
 }
 
 const VRM_CONTAINER_NAME = "VRM_CONTAINER";
@@ -2130,5 +2131,42 @@ function blendExpressions(character, weights) {
         if (vrm.expressionManager.expressionMap[expr] !== undefined || baseEmotions.includes(expr)) {
             current_avatars[character].targetExpressions[expr] = val;
         }
+    }
+}
+
+async function processStandaloneGroq(character, text) {
+    console.debug(DEBUG_PREFIX, "=== processStandaloneGroq START ===", { character, textLength: text?.length });
+    try {
+        const avatar = current_avatars[character];
+        if (!avatar) return;
+
+        const sentenceObjects = extractSentencesWithContext(text);
+        if (!sentenceObjects || sentenceObjects.length === 0) return;
+        
+        let availableExpressions =[];
+        if (avatar.vrm && avatar.vrm.expressionManager) {
+            availableExpressions = Object.keys(avatar.vrm.expressionManager.expressionMap).filter(
+                e => !avatar.vrm.expressionManager.blinkExpressionNames.includes(e) && 
+                     !avatar.vrm.expressionManager.mouthExpressionNames.includes(e) && 
+                     !avatar.vrm.expressionManager.lookAtExpressionNames.includes(e)
+            );
+        }
+        const availableMotions = animations_groups ||[];
+
+        // Process the first meaningful sentence for a quick standalone reaction
+        const item = sentenceObjects[0];
+        const tags = await fetchSmallLLMTag(item.sentence, item.textBefore, item.textAfter, availableExpressions, availableMotions);
+
+        console.debug(DEBUG_PREFIX, "Standalone Groq tags received:", tags);
+
+        if (tags.expression && tags.expression !== "none") {
+            setExpression(character, tags.expression);
+        }
+        if (tags.motion && tags.motion !== "none") {
+            // Play animation (loop=false, force=true, random=true, returnToIdle=true)
+            setMotion(character, tags.motion, false, true, true, true);
+        }
+    } catch (err) {
+        console.error(DEBUG_PREFIX, "Error in processStandaloneGroq:", err);
     }
 }

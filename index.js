@@ -89,7 +89,8 @@ import {
     playTimelineMotions,
     processAndQueueTTS,
     stopTTS,
-    blendExpressions
+    blendExpressions,
+    processStandaloneGroq
 } from "./vrm.js";
 import {
     onEnabledClick,
@@ -323,18 +324,28 @@ function loadSettings() {
         }
         lastEditedMessage = { id: chat_id, text: message.mes, time: now };
 
-        if (extension_settings.vrm.inworld_tts_enabled && !message.is_user && !message.is_system) {
-            await updateExpression(chat_id, true);
-            processAndQueueTTS(message.name, message.mes, true);
-        } else {
-            updateExpression(chat_id);
-            talk(chat_id);
+        if (!message.is_user && !message.is_system) {
+            if (extension_settings.vrm.inworld_tts_enabled) {
+                console.debug(DEBUG_PREFIX, "Triggering Inworld TTS + Groq pipeline...");
+                await updateExpression(chat_id, true);
+                processAndQueueTTS(message.name, message.mes, true);
+            } else {
+                console.debug(DEBUG_PREFIX, "Inworld TTS disabled. Running basic expressions...");
+                updateExpression(chat_id);
+                talk(chat_id);
+                
+                // Decoupled Groq: Trigger animation even if using ST's native TTS
+                if (extension_settings.vrm.groq_api_key) {
+                    console.debug(DEBUG_PREFIX, "Fetching standalone Groq animation...");
+                    processStandaloneGroq(message.name, message.mes);
+                }
+            }
         }
     };
 
-    // Bind to all three update events to ensure compatibility with all SillyTavern versions
-    eventSource.on(event_types.MESSAGE_RECEIVED, onMessageEdit);
+    // Bind to all update events
     eventSource.on(event_types.MESSAGE_EDITED, onMessageEdit);
+    eventSource.on(event_types.MESSAGE_UPDATED, onMessageEdit);
     eventSource.on(event_types.MESSAGE_SWIPED, onMessageEdit);
 
     updateCharactersListOnce();
