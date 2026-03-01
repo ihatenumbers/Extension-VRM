@@ -1494,16 +1494,6 @@ async function updateExpression(chat_id, skipMotion = false) {
         return; 
     }
 
-    if (model_expression == 'none') {
-        model_expression = extension_settings.vrm.model_settings[model_path]['animation_default']['expression'];
-    }
-
-    if (model_motion == 'none') {
-        model_motion = extension_settings.vrm.model_settings[model_path]['animation_default']['motion'];
-    }
-
-    await setExpression(character, model_expression);
-    
     // Skip overriding the motion if Inworld TTS is about to take over
     if (!skipMotion) {
         await setMotion(character, model_motion);
