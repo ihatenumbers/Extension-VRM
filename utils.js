@@ -376,11 +376,15 @@ async function fetchSmallLLMTag(sentence, textBefore, textAfter, availableExpres
     const systemPrompt = `You are an animation director for a 3D avatar.
 Choose ONE expression and ONE animation that best match the "Current Sentence".
 
-Available Expressions: ${availableExpressions.join(', ')}
-Available Animations: ${shortMotions.join(', ')}
+[expressions:${availableExpressions.join(', ')}]
+[animations: ${shortMotions.join(', ')}]
 
 Reply EXACTLY with this format and nothing else:
 [expression:NAME] [animation:NAME]
+
+Examples:
+[expression:mouth ω] [animation:amusement]
+[expression:-6prefab 1joy mesugaki] [animation:pride]
 
 If nothing fits perfectly, use [expression:neutral] [animation:neutral].`;
 
