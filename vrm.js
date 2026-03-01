@@ -1846,7 +1846,11 @@ function stopTTS(character) {
         avatar.currentTtsAudio.currentTime = 0;
         avatar.currentTtsAudio = null;
     }
-    avatar.isPlayingTts = false;['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => {
+    
+    avatar.isPlayingTts = false;
+    
+    const shapes =['aa', 'ee', 'ih', 'oh', 'ou'];
+    shapes.forEach(shape => {
         if (avatar.vrm && avatar.vrm.expressionManager) {
             avatar.vrm.expressionManager.setValue(shape, 0);
         }
@@ -1868,6 +1872,7 @@ function stopTTS(character) {
         if (currentMotionGroup !== defaultMotionGroup) setMotion(character, defaultMot, true, false, false);
     }
 }
+
 
 // Replaces the old audioTalk with a direct MediaElement binder
 function attachVolumeLipSync(audio, character) {
