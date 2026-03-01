@@ -107,17 +107,19 @@ function applyNaturalMovementWithSlerp(vrm, boneName, movementConfig, character,
     if (!avatar || avatar.id !== modelId) return;
 
     if (!avatar.boneOffsets) avatar.boneOffsets = {};
-    if (!avatar.boneOffsets[boneName]) avatar.boneOffsets[boneName] = new THREE.Quaternion();
+    
+    // Start from current offset if it exists (for smooth chaining), otherwise start clean (identity)
+    const startQuat = avatar.boneOffsets[boneName] ? avatar.boneOffsets[boneName].clone() : new THREE.Quaternion();
+    avatar.boneOffsets[boneName] = startQuat.clone();
 
     if (!avatar.boneTweens) avatar.boneTweens = {};
 
-    // Register a smooth offset tween instead of hijacking the bone directly
     avatar.boneTweens[boneName] = {
         startTime: Date.now(),
         rampDuration: duration * 0.3,
         holdDuration: duration * 0.4,
         totalDuration: duration,
-        startQuat: avatar.boneOffsets[boneName].clone(),
+        startQuat: startQuat,
         targetQuat: new THREE.Quaternion().setFromEuler(new THREE.Euler(movementConfig.x, movementConfig.y, movementConfig.z))
     };
 }
@@ -668,6 +670,124 @@ function animate() {
             const vrm = avatar["vrm"];
             const mixer = avatar["animation_mixer"];
 
+            // 1. RESTORE BACKUPS: Restore bones to their clean state from the previous frame
+            // This prevents the infinite twisting/spinning bug on un-keyframed bones
+            if (avatar.boneBackups) {
+                for (const[boneName, backupQuat] of Object.entries(avatar.boneBackups)) {
+                    const bone = vrm.humanoid?.getNormalizedBoneNode(boneName);
+                    if (bone) {
+                        bone.quaternion.copy(backupQuat);
+                    }
+                }
+            }
+
+            // 2. MIXER UPDATE: Apply the base animation (e.g. idle.fbx)
+            mixer.update( deltaTime );
+
+            // 3. BUSY CHECK: Determine if we need to interrupt idle movements
+            let isBusy = false;
+            const model_path = avatar.model_path;
+            const defaultMotion = extension_settings.vrm.model_settings[model_path]?.['animation_default']?.['motion'];
+            
+            let currentMotionGroup = avatar.motion.name;
+            if (currentMotionGroup && currentMotionGroup !== "none") {
+                currentMotionGroup = currentMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
+            }
+            let defaultMotionGroup = defaultMotion;
+            if (defaultMotionGroup && defaultMotionGroup !== "none") {
+                defaultMotionGroup = defaultMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
+            }
+            
+            if (currentMotionGroup !== defaultMotionGroup || avatar.isPlayingTts || (avatar.talkEnd || 0) > Date.now() || (avatar.motionQueue && avatar.motionQueue.length > 0)) {
+                isBusy = true;
+            }
+
+            // 4. PROCEDURAL TWEENS: Calculate current procedural offsets
+            if (avatar.boneTweens && avatar.boneOffsets) {
+                const now = Date.now();
+                for (const[boneName, tween] of Object.entries(avatar.boneTweens)) {
+                    const elapsed = now - tween.startTime;
+                    
+                    // Gracefully interrupt and fade out if avatar becomes busy
+                    if (isBusy && elapsed < tween.rampDuration + tween.holdDuration && !tween.isInterrupting) {
+                        tween.isInterrupting = true;
+                        tween.rampDuration = Math.min(tween.rampDuration, elapsed);
+                        tween.holdDuration = 0;
+                        tween.totalDuration = elapsed + 800; // 0.8 seconds to smoothly fade out
+                        tween.targetQuat = avatar.boneOffsets[boneName].clone(); // Fade from current exact offset
+                    }
+
+                    if (elapsed >= tween.totalDuration) {
+                        delete avatar.boneTweens[boneName];
+                        delete avatar.boneOffsets[boneName];
+                        continue;
+                    }
+
+                    if (elapsed < tween.rampDuration) {
+                        const t = easeInOutCubic(elapsed / tween.rampDuration);
+                        avatar.boneOffsets[boneName].slerpQuaternions(tween.startQuat, tween.targetQuat, t);
+                    } else if (elapsed < tween.rampDuration + tween.holdDuration) {
+                        avatar.boneOffsets[boneName].copy(tween.targetQuat);
+                    } else {
+                        const rampDownElapsed = elapsed - tween.rampDuration - tween.holdDuration;
+                        const rampDownDuration = tween.totalDuration - tween.rampDuration - tween.holdDuration;
+                        const t = rampDownDuration > 0 ? easeInOutCubic(rampDownElapsed / rampDownDuration) : 1;
+                        const identity = new THREE.Quaternion();
+                        avatar.boneOffsets[boneName].slerpQuaternions(tween.targetQuat, identity, t);
+                    }
+                }
+            }
+
+            // 5. SAVE BACKUPS & APPLY: Save the clean state, then apply our offsets on top
+            avatar.boneBackups = {};
+            if (avatar.boneOffsets) {
+                for (const [boneName, offsetQuat] of Object.entries(avatar.boneOffsets)) {
+                    const bone = vrm.humanoid?.getNormalizedBoneNode(boneName);
+                    if (bone) {
+                        // Save the clean bone rotation
+                        avatar.boneBackups[boneName] = bone.quaternion.clone();
+                        // Apply the procedural rotation on top
+                        bone.quaternion.multiply(offsetQuat);
+                    }
+                }
+            }
+
+            // 6. MODEL ROTATION OFFSET
+            if (avatar.modelRotationTween !== undefined) {
+                const tween = avatar.modelRotationTween;
+                const now = Date.now();
+                const elapsed = now - tween.startTime;
+
+                if (isBusy && elapsed < tween.rampDuration + tween.holdDuration && !tween.isInterrupting) {
+                    tween.isInterrupting = true;
+                    tween.rampDuration = Math.min(tween.rampDuration, elapsed);
+                    tween.holdDuration = 0;
+                    tween.totalDuration = elapsed + 800;
+                    tween.targetYaw = avatar.modelRotationOffset || 0;
+                }
+
+                if (elapsed >= tween.totalDuration) {
+                    avatar.modelRotationOffset = 0;
+                    delete avatar.modelRotationTween;
+                } else {
+                    if (elapsed < tween.rampDuration) {
+                        const t = easeInOutCubic(elapsed / tween.rampDuration);
+                        avatar.modelRotationOffset = tween.startYaw + (tween.targetYaw - tween.startYaw) * t;
+                    } else if (elapsed < tween.rampDuration + tween.holdDuration) {
+                        avatar.modelRotationOffset = tween.targetYaw;
+                    } else {
+                        const rampDownElapsed = elapsed - tween.rampDuration - tween.holdDuration;
+                        const rampDownDuration = tween.totalDuration - tween.rampDuration - tween.holdDuration;
+                        const t = rampDownDuration > 0 ? easeInOutCubic(rampDownElapsed / rampDownDuration) : 1;
+                        avatar.modelRotationOffset = tween.targetYaw * (1 - t);
+                    }
+                }
+                
+                const baseRy = Number(extension_settings.vrm.model_settings[model_path]?.['ry'] || 0);
+                avatar.objectContainer.rotation.y = baseRy + avatar.modelRotationOffset;
+            }
+
+            // 7. EYE DARTS & LOOK-AT LOGIC
             if (avatar.eyeTimer === undefined) {
                 avatar.eyeTimer = 0;
                 avatar.eyeTargetOffset = new THREE.Vector3(0, 0, 0);
@@ -728,6 +848,7 @@ function animate() {
                 }
             }
 
+            // 8. EXPRESSION INTERPOLATION
             if (avatar.targetExpressions) {
                 for (const[expr, targetVal] of Object.entries(avatar.targetExpressions)) {
                     if (avatar.currentExpressions[expr] === undefined) {
@@ -749,108 +870,9 @@ function animate() {
                 }
             }
 
+            // 9. FINAL VRM UPDATE
+            // Processes the LookAt offsets and simulates the SpringBones (hair/clothes) over the final combined pose
             vrm.update( deltaTime );
-            mixer.update( deltaTime );
-
-            // Check if avatar is currently busy (talking or doing a non-idle animation)
-            let isBusy = false;
-            const model_path = avatar.model_path;
-            const defaultMotion = extension_settings.vrm.model_settings[model_path]?.['animation_default']?.['motion'];
-            
-            let currentMotionGroup = avatar.motion.name;
-            if (currentMotionGroup && currentMotionGroup !== "none") {
-                currentMotionGroup = currentMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
-            }
-            let defaultMotionGroup = defaultMotion;
-            if (defaultMotionGroup && defaultMotionGroup !== "none") {
-                defaultMotionGroup = defaultMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
-            }
-            
-            if (currentMotionGroup !== defaultMotionGroup || avatar.isPlayingTts || (avatar.talkEnd || 0) > Date.now() || (avatar.motionQueue && avatar.motionQueue.length > 0)) {
-                isBusy = true;
-            }
-
-            // --- PROCEDURAL ANIMATIONS (Apply ON TOP of mixer) ---
-            if (avatar.boneTweens && avatar.boneOffsets) {
-                const now = Date.now();
-                for (const [boneName, tween] of Object.entries(avatar.boneTweens)) {
-                    const elapsed = now - tween.startTime;
-                    
-                    // Gracefully interrupt and fade out if avatar becomes busy
-                    if (isBusy && elapsed < tween.rampDuration + tween.holdDuration && !tween.isInterrupting) {
-                        tween.isInterrupting = true;
-                        tween.rampDuration = Math.min(tween.rampDuration, elapsed);
-                        tween.holdDuration = 0;
-                        tween.totalDuration = elapsed + 1600; // 1.6 seconds to smoothly fade out
-                        tween.targetQuat = avatar.boneOffsets[boneName].clone(); // Fade from current exact offset
-                    }
-
-                    if (elapsed >= tween.totalDuration) {
-                        avatar.boneOffsets[boneName].identity();
-                        delete avatar.boneTweens[boneName];
-                        continue;
-                    }
-
-                    if (elapsed < tween.rampDuration) {
-                        const t = easeInOutCubic(elapsed / tween.rampDuration);
-                        avatar.boneOffsets[boneName].slerpQuaternions(tween.startQuat, tween.targetQuat, t);
-                    } else if (elapsed < tween.rampDuration + tween.holdDuration) {
-                        avatar.boneOffsets[boneName].copy(tween.targetQuat);
-                    } else {
-                        const rampDownElapsed = elapsed - tween.rampDuration - tween.holdDuration;
-                        const rampDownDuration = tween.totalDuration - tween.rampDuration - tween.holdDuration;
-                        const t = rampDownDuration > 0 ? easeInOutCubic(rampDownElapsed / rampDownDuration) : 1;
-                        const identity = new THREE.Quaternion();
-                        avatar.boneOffsets[boneName].slerpQuaternions(tween.targetQuat, identity, t);
-                    }
-                }
-            }
-
-            // Apply the calculated offsets to the bones
-            if (avatar.boneOffsets) {
-                for (const [boneName, offsetQuat] of Object.entries(avatar.boneOffsets)) {
-                    const bone = vrm.humanoid?.getNormalizedBoneNode(boneName);
-                    if (bone) {
-                        bone.quaternion.multiply(offsetQuat);
-                    }
-                }
-            }
-
-            // Model Rotation Procedural Offset
-            if (avatar.modelRotationTween !== undefined) {
-                const tween = avatar.modelRotationTween;
-                const now = Date.now();
-                const elapsed = now - tween.startTime;
-
-                // Gracefully interrupt and fade out if avatar becomes busy
-                if (isBusy && elapsed < tween.rampDuration + tween.holdDuration && !tween.isInterrupting) {
-                    tween.isInterrupting = true;
-                    tween.rampDuration = Math.min(tween.rampDuration, elapsed);
-                    tween.holdDuration = 0;
-                    tween.totalDuration = elapsed + 800;
-                    tween.targetYaw = avatar.modelRotationOffset || 0;
-                }
-
-                if (elapsed >= tween.totalDuration) {
-                    avatar.modelRotationOffset = 0;
-                    delete avatar.modelRotationTween;
-                } else {
-                    if (elapsed < tween.rampDuration) {
-                        const t = easeInOutCubic(elapsed / tween.rampDuration);
-                        avatar.modelRotationOffset = tween.startYaw + (tween.targetYaw - tween.startYaw) * t;
-                    } else if (elapsed < tween.rampDuration + tween.holdDuration) {
-                        avatar.modelRotationOffset = tween.targetYaw;
-                    } else {
-                        const rampDownElapsed = elapsed - tween.rampDuration - tween.holdDuration;
-                        const rampDownDuration = tween.totalDuration - tween.rampDuration - tween.holdDuration;
-                        const t = rampDownDuration > 0 ? easeInOutCubic(rampDownElapsed / rampDownDuration) : 1;
-                        avatar.modelRotationOffset = tween.targetYaw * (1 - t);
-                    }
-                }
-                
-                const baseRy = Number(extension_settings.vrm.model_settings[model_path]?.['ry'] || 0);
-                avatar.objectContainer.rotation.y = baseRy + avatar.modelRotationOffset;
-            }
         }
         
         gridHelper.visible = extension_settings.vrm.show_grid;
