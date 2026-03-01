@@ -1493,11 +1493,6 @@ async function updateExpression(chat_id, skipMotion = false) {
         }
         return; 
     }
-
-    // Skip overriding the motion if Inworld TTS is about to take over
-    if (!skipMotion) {
-        await setMotion(character, model_motion);
-    }
 }
 
 
