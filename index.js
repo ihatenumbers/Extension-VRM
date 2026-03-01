@@ -307,21 +307,24 @@ function loadSettings() {
         loadAllModels(currentChatMembers());
     });
 
-    eventSource.on(event_types.MESSAGE_RECEIVED, async (chat_id) => {
-        const message = getContext().chat[chat_id];
-        
-        if (extension_settings.vrm.inworld_tts_enabled && !message.is_user && !message.is_system) {
-            await updateExpression(chat_id, true);
-            processAndQueueTTS(message.name, message.mes, true); 
-        } else {
-            updateExpression(chat_id);
-            talk(chat_id);
-        }
-    });
+    // Add a debounce tracker to prevent double-firing if ST emits multiple events
+    let lastEditedMessage = { id: null, text: null, time: 0 };
 
-    eventSource.on(event_types.MESSAGE_EDITED, async (chat_id) => {
+    const onMessageEdit = async (chat_id) => {
         const message = getContext().chat[chat_id];
-        
+        if (!message) return;
+
+        const now = Date.now();
+        // Prevent duplicate triggers if both EDITED and UPDATED fire for the same edit/swipe
+        if (lastEditedMessage.id === chat_id && 
+            lastEditedMessage.text === message.mes && 
+            (now - lastEditedMessage.time) < 1000) {
+            return; 
+        }
+        lastEditedMessage = { id: chat_id, text: message.mes, time: now };
+
+        console.debug(DEBUG_PREFIX, "Message edited/swiped:", chat_id);
+
         if (extension_settings.vrm.inworld_tts_enabled && !message.is_user && !message.is_system) {
             await updateExpression(chat_id, true);
             processAndQueueTTS(message.name, message.mes, true);
@@ -329,7 +332,13 @@ function loadSettings() {
             updateExpression(chat_id);
             talk(chat_id);
         }
-    });
+    };
+
+    // Bind to all three update events to ensure compatibility with all SillyTavern versions
+    eventSource.on(event_types.MESSAGE_EDITED, onMessageEdit);
+    eventSource.on(event_types.MESSAGE_UPDATED, onMessageEdit);
+    eventSource.on(event_types.MESSAGE_SWIPED, onMessageEdit);
+    eventSource.on(event_types.MESSAGE_RECEIVED, onMessageEdit);
 
     updateCharactersListOnce();
     updateCharactersModels();
