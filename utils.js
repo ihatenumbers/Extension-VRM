@@ -312,6 +312,7 @@ async function fetchInworldTTS(text, voiceId, temperature, speed) {
         console.debug(DEBUG_PREFIX, "Using cached Inworld TTS audio.");
         return ttsCache.get(cacheKey);
     }
+    console.debug(DEBUG_PREFIX, "Running tts: ", text);
 
     try {
         const response = await fetch("https://api.inworld.ai/tts/v1/voice", {

@@ -1460,38 +1460,44 @@ async function setMotion(character, motion_file_path, loop=false, force=false, r
 }
 
 async function updateExpression(chat_id, skipMotion = false) {
-    const message = getContext().chat[chat_id];
-    const character = message.name;
-    const model_path = extension_settings.vrm.character_model_mapping[character];
+    try {
+        const message = getContext().chat[chat_id];
+        if (!message) return;
+        
+        const character = message.name;
+        const model_path = extension_settings.vrm.character_model_mapping[character];
 
-    console.debug(DEBUG_PREFIX,'received new message :', message.mes);
+        console.debug(DEBUG_PREFIX, 'received new message :', message.mes);
 
-    if (message.is_user) return;
-    if (model_path === undefined) {
-        console.debug(DEBUG_PREFIX, 'No model assigned to', character);
-        return;
-    }
+        if (message.is_user) return;
+        if (model_path === undefined) {
+            console.debug(DEBUG_PREFIX, 'No model assigned to', character);
+            return;
+        }
 
-    const tags =[...message.mes.matchAll(/\[(.*?)\]/g)].map(m => m[1]);
-    const timelineMotions =[];
+        const tags =[...message.mes.matchAll(/\[(.*?)\]/g)].map(m => m[1]);
+        const timelineMotions =[];
 
-    if (tags.length > 0) {
-        const fuse = new Fuse(animations_files);
-        for (const tag of tags) {
-            const results = fuse.search(tag);
-            const fileItem = results[0]?.item;
-            if (fileItem) {
-                timelineMotions.push(fileItem);
+        if (tags.length > 0 && typeof Fuse !== 'undefined' && animations_files) {
+            const fuse = new Fuse(animations_files);
+            for (const tag of tags) {
+                const results = fuse.search(tag);
+                const fileItem = results[0]?.item;
+                if (fileItem) {
+                    timelineMotions.push(fileItem);
+                }
             }
         }
-    }
 
-    if (timelineMotions.length > 0) {
-        if (!skipMotion) {
-            console.debug(DEBUG_PREFIX, 'Playing timeline animations:', timelineMotions);
-            playTimelineMotions(character, timelineMotions);
+        if (timelineMotions.length > 0) {
+            if (!skipMotion) {
+                console.debug(DEBUG_PREFIX, 'Playing timeline animations:', timelineMotions);
+                playTimelineMotions(character, timelineMotions);
+            }
+            return; 
         }
-        return; 
+    } catch (err) {
+        console.error(DEBUG_PREFIX, "Error in updateExpression:", err);
     }
 }
 
@@ -1837,8 +1843,10 @@ function base64ToBlob(base64, mimeType) {
 
 // Immediately stops current TTS and resets the mouth
 function stopTTS(character) {
-    const avatar = current_avatars[character];
-    if (!avatar) return;
+    try {
+        console.debug(DEBUG_PREFIX, "Stopping TTS for", character);
+        const avatar = current_avatars[character];
+        if (!avatar) return;
 
     avatar.ttsQueue =[]; 
     if (avatar.currentTtsAudio) {
@@ -1856,20 +1864,25 @@ function stopTTS(character) {
         }
     });
 
-    const model_path = extension_settings.vrm.character_model_mapping[character];
-    if (model_path) {
-        const defaultMot = extension_settings.vrm.model_settings[model_path]['animation_default']['motion'];
-        
-        let currentMotionGroup = avatar.motion.name;
-        if (currentMotionGroup && currentMotionGroup !== "none") {
-            currentMotionGroup = currentMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
-        }
-        let defaultMotionGroup = defaultMot;
-        if (defaultMotionGroup && defaultMotionGroup !== "none") {
-            defaultMotionGroup = defaultMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
-        }
+        const model_path = extension_settings.vrm.character_model_mapping[character];
+        if (model_path && extension_settings.vrm.model_settings[model_path] && extension_settings.vrm.model_settings[model_path]['animation_default']) {
+            const defaultMot = extension_settings.vrm.model_settings[model_path]['animation_default']['motion'];
+            
+            let currentMotionGroup = avatar.motion.name;
+            if (currentMotionGroup && currentMotionGroup !== "none") {
+                currentMotionGroup = currentMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
+            }
+            let defaultMotionGroup = defaultMot;
+            if (defaultMotionGroup && defaultMotionGroup !== "none") {
+                defaultMotionGroup = defaultMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
+            }
 
-        if (currentMotionGroup !== defaultMotionGroup) setMotion(character, defaultMot, true, false, false);
+            if (currentMotionGroup !== defaultMotionGroup) {
+                setMotion(character, defaultMot, true, false, false);
+            }
+        }
+    } catch (err) {
+        console.error(DEBUG_PREFIX, "Error in stopTTS:", err);
     }
 }
 
@@ -1939,123 +1952,167 @@ function attachVolumeLipSync(audio, character) {
 }
 
 async function processAndQueueTTS(character, text, clearQueue = false) {
-    const avatar = current_avatars[character];
-    if (!avatar) return;
-
-    if (clearQueue) stopTTS(character);
-
-    const sentenceObjects = extractSentencesWithContext(text);
-    if (!sentenceObjects || sentenceObjects.length === 0) return;
-    
-    let voiceId = extension_settings.vrm.inworld_default_voice_id || "Dennis";
-    if (extension_settings.vrm.voiceMap && extension_settings.vrm.voiceMap[character]) {
-        voiceId = extension_settings.vrm.voiceMap[character];
-    }
-
-    const temperature = extension_settings.vrm.inworld_temperature ?? 1.1;
-    const speed = extension_settings.vrm.inworld_speed ?? 1.0;
-
-    let availableExpressions =[];
-    if (avatar.vrm && avatar.vrm.expressionManager) {
-        availableExpressions = Object.keys(avatar.vrm.expressionManager.expressionMap).filter(
-            e => !avatar.vrm.expressionManager.blinkExpressionNames.includes(e) && 
-                 !avatar.vrm.expressionManager.mouthExpressionNames.includes(e) && 
-                 !avatar.vrm.expressionManager.lookAtExpressionNames.includes(e)
-        );
-    }
-    const availableMotions = animations_groups ||[];
-
-    for (const item of sentenceObjects) {
-        const { sentence, textBefore, textAfter } = item;
-
-        const [ttsData, tags] = await Promise.all([
-            fetchInworldTTS(sentence, voiceId, temperature, speed),
-            fetchSmallLLMTag(sentence, textBefore, textAfter, availableExpressions, availableMotions)
-        ]);
-
-        if (ttsData && ttsData.audioContent) {
-            avatar.ttsQueue.push({
-                audioBase64: ttsData.audioContent,
-                expression: tags.expression,
-                motion: tags.motion
-            });
-
-            playNextInQueue(character);
+    console.debug(DEBUG_PREFIX, "=== processAndQueueTTS START ===", { character, textLength: text?.length, clearQueue });
+    try {
+        const avatar = current_avatars[character];
+        if (!avatar) {
+            console.warn(DEBUG_PREFIX, "TTS Aborted: No avatar found for character", character);
+            return;
         }
+
+        if (clearQueue) stopTTS(character);
+
+        const sentenceObjects = extractSentencesWithContext(text);
+        console.debug(DEBUG_PREFIX, "Extracted sentences:", sentenceObjects);
+        
+        if (!sentenceObjects || sentenceObjects.length === 0) {
+            console.warn(DEBUG_PREFIX, "TTS Aborted: No valid sentences extracted from text.");
+            return;
+        }
+        
+        let voiceId = extension_settings.vrm.inworld_default_voice_id || "Dennis";
+        if (extension_settings.vrm.voiceMap && extension_settings.vrm.voiceMap[character]) {
+            voiceId = extension_settings.vrm.voiceMap[character];
+        }
+
+        const temperature = extension_settings.vrm.inworld_temperature ?? 1.1;
+        const speed = extension_settings.vrm.inworld_speed ?? 1.0;
+
+        let availableExpressions =[];
+        if (avatar.vrm && avatar.vrm.expressionManager) {
+            availableExpressions = Object.keys(avatar.vrm.expressionManager.expressionMap).filter(
+                e => !avatar.vrm.expressionManager.blinkExpressionNames.includes(e) && 
+                     !avatar.vrm.expressionManager.mouthExpressionNames.includes(e) && 
+                     !avatar.vrm.expressionManager.lookAtExpressionNames.includes(e)
+            );
+        }
+        const availableMotions = animations_groups ||[];
+
+        for (const item of sentenceObjects) {
+            const { sentence, textBefore, textAfter } = item;
+            console.debug(DEBUG_PREFIX, "Processing sentence:", sentence);
+
+            const [ttsData, tags] = await Promise.all([
+                fetchInworldTTS(sentence, voiceId, temperature, speed),
+                fetchSmallLLMTag(sentence, textBefore, textAfter, availableExpressions, availableMotions)
+            ]);
+
+            console.debug(DEBUG_PREFIX, "TTS Data received:", !!ttsData, "Tags received:", tags);
+
+            let finalExpression = tags?.expression;
+            let finalMotion = tags?.motion;
+
+            // Fallback to manual [tags] if LLM tagger missed or is disabled
+            const manualTags = [...sentence.matchAll(/\[(.*?)\]/g)].map(m => m[1]);
+            if (manualTags.length > 0) {
+                for (const tag of manualTags) {
+                    if (availableExpressions.includes(tag) && !finalExpression) {
+                        finalExpression = tag;
+                    }
+                    if (availableMotions.includes(tag) && !finalMotion) {
+                        const matchingMotion = animations_files.find(f => f.includes(tag));
+                        if (matchingMotion) {
+                            finalMotion = matchingMotion;
+                        }
+                    }
+                }
+            }
+
+            if (ttsData && ttsData.audioContent) {
+                console.debug(DEBUG_PREFIX, "Queueing audio snippet for:", character);
+                avatar.ttsQueue.push({
+                    audioBase64: ttsData.audioContent,
+                    expression: finalExpression,
+                    motion: finalMotion
+                });
+
+                playNextInQueue(character);
+            } else {
+                console.warn(DEBUG_PREFIX, "TTS Data was empty or invalid for sentence:", sentence);
+            }
+        }
+    } catch (err) {
+        console.error(DEBUG_PREFIX, "Fatal error in processAndQueueTTS:", err);
     }
 }
 
 async function playNextInQueue(character) {
-    const avatar = current_avatars[character];
-    if (!avatar) return;
+    try {
+        const avatar = current_avatars[character];
+        if (!avatar) return;
 
-    if (avatar.ttsQueue.length === 0) {
-        if (!avatar.isPlayingTts) {
-            const model_path = extension_settings.vrm.character_model_mapping[character];
-            if (model_path) {
-                const defaultMot = extension_settings.vrm.model_settings[model_path]['animation_default']['motion'];
-                
-                let currentMotionGroup = avatar.motion.name;
-                if (currentMotionGroup && currentMotionGroup !== "none") {
-                    currentMotionGroup = currentMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
-                }
-                let defaultMotionGroup = defaultMot;
-                if (defaultMotionGroup && defaultMotionGroup !== "none") {
-                    defaultMotionGroup = defaultMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
-                }
+        if (avatar.ttsQueue.length === 0) {
+            if (!avatar.isPlayingTts) {
+                const model_path = extension_settings.vrm.character_model_mapping[character];
+                if (model_path && extension_settings.vrm.model_settings[model_path]) {
+                    const defaultMot = extension_settings.vrm.model_settings[model_path]['animation_default']['motion'];
+                    
+                    let currentMotionGroup = avatar.motion.name;
+                    if (currentMotionGroup && currentMotionGroup !== "none") {
+                        currentMotionGroup = currentMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
+                    }
+                    let defaultMotionGroup = defaultMot;
+                    if (defaultMotionGroup && defaultMotionGroup !== "none") {
+                        defaultMotionGroup = defaultMotionGroup.replace(/\.[^/.]+$/, "").replace(/\d+$/, "");
+                    }
 
-                if (currentMotionGroup !== defaultMotionGroup) setMotion(character, defaultMot, true, false, false);
+                    if (currentMotionGroup !== defaultMotionGroup) {
+                        setMotion(character, defaultMot, true, false, false);
+                    }
+                }
             }
+            return;
         }
-        return;
-    }
 
-    if (avatar.isPlayingTts) return;
+        if (avatar.isPlayingTts) return;
 
-    avatar.isPlayingTts = true;
-    const item = avatar.ttsQueue.shift();
+        avatar.isPlayingTts = true;
+        const item = avatar.ttsQueue.shift();
 
-    const blob = base64ToBlob(item.audioBase64, 'audio/mp3');
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    audio.volume = 1.0; 
-    
-    avatar.currentTtsAudio = audio;
-
-    if (item.expression && item.expression !== "none") {
-        setExpression(character, item.expression);
-    }
-    if (item.motion && item.motion !== "none") {
-        setMotion(character, item.motion, false, true, true, false); 
-    }
-
-    await new Promise(resolve => setTimeout(resolve, 800));
-
-    if (!avatar.isPlayingTts || avatar.currentTtsAudio !== audio) {
-        URL.revokeObjectURL(url);
-        return; 
-    }
-
-    attachVolumeLipSync(audio, character);
-
-    audio.onended = () => {
-        URL.revokeObjectURL(url); 
-        avatar.isPlayingTts = false;
-        avatar.currentTtsAudio = null;['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => {
-            if (avatar.vrm && avatar.vrm.expressionManager) {
-                avatar.vrm.expressionManager.setValue(shape, 0);
-            }
-        });
+        const blob = base64ToBlob(item.audioBase64, 'audio/mp3');
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.volume = 1.0; 
         
-        playNextInQueue(character);
-    };
+        avatar.currentTtsAudio = audio;
 
-    audio.play().catch(e => {
-        console.error(DEBUG_PREFIX, "Audio playback blocked by browser:", e);
-        URL.revokeObjectURL(url);
-        avatar.isPlayingTts = false;
-        playNextInQueue(character);
-    });
+        if (item.expression && item.expression !== "none") {
+            setExpression(character, item.expression);
+        }
+        if (item.motion && item.motion !== "none") {
+            setMotion(character, item.motion, false, true, true, false); 
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 800));
+
+        if (!avatar.isPlayingTts || avatar.currentTtsAudio !== audio) {
+            URL.revokeObjectURL(url);
+            return; 
+        }
+
+        attachVolumeLipSync(audio, character);
+
+        audio.onended = () => {
+            URL.revokeObjectURL(url); 
+            avatar.isPlayingTts = false;
+            avatar.currentTtsAudio = null;['aa', 'ee', 'ih', 'oh', 'ou'].forEach(shape => {
+                if (avatar.vrm && avatar.vrm.expressionManager) {
+                    avatar.vrm.expressionManager.setValue(shape, 0);
+                }
+            });
+            
+            playNextInQueue(character);
+        };
+
+        audio.play().catch(e => {
+            console.error(DEBUG_PREFIX, "Audio playback blocked by browser:", e);
+            URL.revokeObjectURL(url);
+            avatar.isPlayingTts = false;
+            playNextInQueue(character);
+        });
+    } catch (err) {
+        console.error(DEBUG_PREFIX, "Error in playNextInQueue:", err);
+    }
 }
 
 function blendExpressions(character, weights) {
@@ -2063,13 +2120,13 @@ function blendExpressions(character, weights) {
     const vrm = current_avatars[character].vrm;
 
     // Zero out base emotions first
-    const baseEmotions =['happy', 'angry', 'sad', 'relaxed', 'surprised', 'neutral'];
+    const baseEmotions = ['happy', 'angry', 'sad', 'relaxed', 'surprised', 'neutral'];
     for (const expr of baseEmotions) {
         current_avatars[character].targetExpressions[expr] = 0.0;
     }
 
     // Apply the new mixed weights from Groq
-    for (const [expr, val] of Object.entries(weights)) {
+    for (const[expr, val] of Object.entries(weights)) {
         if (vrm.expressionManager.expressionMap[expr] !== undefined || baseEmotions.includes(expr)) {
             current_avatars[character].targetExpressions[expr] = val;
         }
